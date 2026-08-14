@@ -27,7 +27,11 @@ import org.unmojang.loki.LokiUtil;
 public class SignatureValidTransformer extends LokiTransformer {
 
     protected boolean matches(String className) {
-        return "com/mojang/authlib/properties/Property".equals(className);
+        // MCAuthlib, which MojangFix and Ears use, keeps its own copy of this class as a nested
+        // GameProfile$Property. Different library, identical shape: same method descriptor, same
+        // two field names, same SHA1withRSA, so the same replacement fits both.
+        return "com/mojang/authlib/properties/Property".equals(className)
+                || className.endsWith("/data/GameProfile$Property");
     }
 
     protected boolean patch(ClassNode cn, String className) {

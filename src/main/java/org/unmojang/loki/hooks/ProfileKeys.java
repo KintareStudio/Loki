@@ -156,6 +156,22 @@ public final class ProfileKeys {
     }
 
     /**
+     * The first published certificate key, for somewhere that can only hold one.
+     * <p>
+     * BungeeCord keeps Mojang's key in a static field and verifies player certificates against it,
+     * and there is no honest way to make a field hold a set. A proxy therefore trusts one key at a
+     * time and has to be restarted across a rotation, which is worth knowing but is still better
+     * than trusting Mojang's key for profiles Mojang never signed.
+     *
+     * @return null when the API server has published none, in which case a caller should keep
+     *         whatever key it already had
+     */
+    public static PublicKey firstCertificateKey(Object owner) {
+        List<PublicKey> keys = trusted(owner, refreshServerKeys().playerCertificate);
+        return keys.isEmpty() ? null : keys.get(0);
+    }
+
+    /**
      * The same, for a caller that knows which kind of key it wants: 26.3+ hands out a key info per
      * {@code ServicesKeyType}, and the verifier it offers has to answer for that type alone.
      *

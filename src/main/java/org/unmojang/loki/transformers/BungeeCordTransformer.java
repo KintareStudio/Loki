@@ -44,6 +44,9 @@ public class BungeeCordTransformer extends LokiTransformer {
             }
         }
 
+        // Every match, not the first. EncryptionUtil has two public check methods -- one for a
+        // player's key certificate and one for the encryption response -- and stopping after
+        // whichever the class file happened to list first left the other one in place.
         for (MethodNode mn : cn.methods) {
             if (Arrays.asList("isValidName", "check").contains(mn.name)
                     && (mn.access & Opcodes.ACC_PUBLIC) != 0 && mn.desc.endsWith(")Z")) {
@@ -55,7 +58,6 @@ public class BungeeCordTransformer extends LokiTransformer {
                 mn.instructions.add(new InsnNode(Opcodes.IRETURN));
                 Loki.log.debug("Patching " + LokiUtil.getFqmn(className, mn.name, mn.desc));
                 changed = true;
-                break;
             }
         }
 

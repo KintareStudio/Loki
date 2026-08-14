@@ -355,21 +355,28 @@ public class Hooks {
         unsafe.putObject(staticBase, staticOffset, value);
     }
 
-    public static void replaceMCAuthlibGameProfileSignature(Class<?> gameProfileClass) {
-        try {
-            log.debug("Replacing Mojang public key in MCAuthlib GameProfile");
-            replaceStaticField(gameProfileClass, "SIGNATURE_KEY", getPublicKey());
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to replace yggdrasil public key!", e);
-        }
-    }
-
+    /**
+     * Points BungeeCord's player certificate check at the API server's key.
+     * <p>
+     * A certificate key, not a profile property one: this field is read by the check that says a
+     * player's chat key really is theirs. Only the first, since a static field holds one key and no
+     * amount of wishing makes it hold a set.
+     * <p>
+     * Failing here used to throw out of a static initialiser, which is a proxy refusing to start
+     * because an API server was briefly unreachable. Now it keeps Mojang's key and says so: a
+     * proxy that is up and trusting the wrong key is worth more than one that is not up.
+     */
     public static void replaceBungeeCordMojangKey(Class<?> encUtilClass) {
         try {
+            PublicKey key = ProfileKeys.firstCertificateKey(encUtilClass);
+            if (key == null) {
+                log.warn("No certificate key published, BungeeCord keeps Mojang's");
+                return;
+            }
             log.debug("Replacing Mojang public key in BungeeCord");
-            replaceStaticField(encUtilClass, "MOJANG_KEY", getPublicKey());
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to replace yggdrasil public key!", e);
+            replaceStaticField(encUtilClass, "MOJANG_KEY", key);
+        } catch (Throwable t) {
+            log.error("Could not replace BungeeCord's public key, it keeps Mojang's", t);
         }
     }
 

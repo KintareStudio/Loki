@@ -84,8 +84,11 @@ public final class NettyBridge {
      * @param simpleNames   handler interfaces to implement, e.g. {@code ChannelOutboundHandler}
      */
     public static Object newHandler(Object sample, String[] simpleNames, Peek peek) throws Exception {
-        Class<?> anchor = interfaceNamed(sample.getClass(), "ChannelPipeline");
-        if (anchor == null) anchor = interfaceNamed(sample.getClass(), "ChannelHandlerContext");
+        // A class is as good an anchor as an instance of one, and is sometimes all a caller has:
+        // a listener has no channel to point at until it has accepted something.
+        Class<?> sampleType = sample instanceof Class ? (Class<?>) sample : sample.getClass();
+        Class<?> anchor = interfaceNamed(sampleType, "ChannelPipeline");
+        if (anchor == null) anchor = interfaceNamed(sampleType, "ChannelHandlerContext");
         if (anchor == null) throw new IllegalArgumentException("Not a Netty channel object: " + sample.getClass());
 
         String prefix = anchor.getName().substring(0, anchor.getName().lastIndexOf('.') + 1);
@@ -239,6 +242,7 @@ public final class NettyBridge {
     }
 
     private static Class<?> interfaceNamed(Class<?> type, String simpleName) {
+        if (type != null && type.getName().endsWith("." + simpleName)) return type;
         for (Class<?> current = type; current != null; current = current.getSuperclass()) {
             Class<?>[] interfaces = current.getInterfaces();
             for (int i = 0; i < interfaces.length; i++) {

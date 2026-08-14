@@ -171,12 +171,26 @@ start_and_ping() {
 }
 
 # Compiled per version, with that version's JDK, because a shared directory would hand a class file
-# built by Java 25 to the Java 8 run that comes after it.
+# built by Java 25 to the Java 8 run that comes after it. Against the shipped jar rather than the
+# class directory, so what runs here is what an operator would attach.
 mkdir -p "$work/pinger"
-"$java_home/bin/javac" -cp "$(topath "$root/build/classes")" -d "$(topath "$work/pinger")" \
-    "$(topath "$root/src/test/java/ServerPing.java")"
+"$java_home/bin/javac" -cp "$(topath "$agent")" -d "$(topath "$work/pinger")" \
+    "$(topath "$root/src/test/java/ServerPing.java")" \
+    "$(topath "$root/src/test/java/NettyRig.java")"
 
-classpath="$(topath "$root/build/classes")$cp_sep$(topath "$work/pinger")"
+classpath="$(topath "$agent")$cp_sep$(topath "$work/pinger")"
+
+# The pipeline on its own first. When something is wrong at that level this says which method and
+# why, where the full server below can only say that a ping timed out.
+say "netty rig"
+rig_status=0
+"$java_bin" -cp "$classpath" NettyRig "$(topath "$work/server.jar")" "$((port + 1))" \
+    2>>"$work/rig.log" || rig_status=$?
+case $rig_status in
+    0) ;;
+    3) say "  rig skipped for this version" ;;
+    *) fail "the netty rig failed, see $work/rig.log" ;;
+esac
 
 cd "$work"
 

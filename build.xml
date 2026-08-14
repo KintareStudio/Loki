@@ -85,6 +85,12 @@
     </target>
 
     <target name="test" depends="compile" description="Run Loki's tests">
+        <!-- From scratch every time. These take a second to build, and javac's own up-to-date
+             check goes by timestamp, so classes left by a different JDK are quietly kept and then
+             refuse to run: "class file version 65.0" under a JDK that speaks 52. -->
+        <delete dir="${build.dir}/test-classes"/>
+        <delete dir="${build.dir}/test-stubs"/>
+        <delete dir="${build.dir}/test-netty"/>
         <mkdir dir="${build.dir}/test-classes"/>
         <mkdir dir="${build.dir}/test-stubs"/>
         <mkdir dir="${build.dir}/test-netty"/>

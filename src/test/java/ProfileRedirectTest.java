@@ -13,7 +13,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.Method;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -186,6 +185,13 @@ public class ProfileRedirectTest {
         }
     }
 
+    /** Loads the patched bytes without reflecting into ClassLoader, which Java 9+ forbids. */
+    private static final class PatchingLoader extends ClassLoader {
+        Class<?> define(String name, byte[] bytes) {
+            return defineClass(name, bytes, 0, bytes.length);
+        }
+    }
+
     /** Patches the Bootstrap stand-in with the real transformer and loads the result. */
     private static void prepareBootstrap(String stubDir) throws Exception {
         File classFile = new File(stubDir, "io/netty/bootstrap/Bootstrap.class");
@@ -205,13 +211,9 @@ public class ProfileRedirectTest {
             System.exit(1);
         }
 
-        ClassLoader loader = new ClassLoader() {};
-        Method defineClass = ClassLoader.class.getDeclaredMethod(
-                "defineClass", String.class, byte[].class, int.class, int.class);
-        defineClass.setAccessible(true);
-        Class<?> patchedClass = (Class<?>) defineClass.invoke(loader,
-                "io.netty.bootstrap.Bootstrap", patched, 0, patched.length);
-        bootstrap = patchedClass.getDeclaredConstructor().newInstance();
+        bootstrap = new PatchingLoader()
+                .define("io.netty.bootstrap.Bootstrap", patched)
+                .getDeclaredConstructor().newInstance();
     }
 
     public static void main(String[] args) throws Exception {

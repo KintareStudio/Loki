@@ -88,22 +88,21 @@
         <mkdir dir="${build.dir}/test-classes"/>
         <mkdir dir="${build.dir}/test-stubs"/>
 
+        <!-- No source/target here on purpose. Tests are never shipped, so they only have to run
+             on the JDK doing the building, and pinning them to javaTarget would break `ant test`
+             on any JDK that has dropped support for it. -->
+
         <!-- Stand-ins for classes Loki patches but does not depend on, kept out of the test
              classpath so the tests load the patched bytes rather than these -->
         <javac srcdir="src/test/stubs" destdir="${build.dir}/test-stubs" fork="true"
-               executable="${java_home}/bin/javac" source="${javaTarget}" target="${javaTarget}"
-               encoding="UTF-8" includeantruntime="false">
-            <compilerarg value="-Xlint:-options"/>
-        </javac>
+               executable="${java_home}/bin/javac" encoding="UTF-8" includeantruntime="false"/>
 
         <javac srcdir="src/test/java" destdir="${build.dir}/test-classes" fork="true"
-               executable="${java_home}/bin/javac" source="${javaTarget}" target="${javaTarget}"
-               encoding="UTF-8" includeantruntime="false">
+               executable="${java_home}/bin/javac" encoding="UTF-8" includeantruntime="false">
             <classpath>
                 <pathelement location="${classes.dir}"/>
                 <path refid="cp"/>
             </classpath>
-            <compilerarg value="-Xlint:-options"/>
         </javac>
 
         <path id="test.classpath">

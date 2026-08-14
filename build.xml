@@ -84,6 +84,46 @@
 
     </target>
 
+    <target name="test" depends="compile" description="Run Loki's tests">
+        <mkdir dir="${build.dir}/test-classes"/>
+        <mkdir dir="${build.dir}/test-stubs"/>
+
+        <!-- Stand-ins for classes Loki patches but does not depend on, kept out of the test
+             classpath so the tests load the patched bytes rather than these -->
+        <javac srcdir="src/test/stubs" destdir="${build.dir}/test-stubs" fork="true"
+               executable="${java_home}/bin/javac" source="${javaTarget}" target="${javaTarget}"
+               encoding="UTF-8" includeantruntime="false">
+            <compilerarg value="-Xlint:-options"/>
+        </javac>
+
+        <javac srcdir="src/test/java" destdir="${build.dir}/test-classes" fork="true"
+               executable="${java_home}/bin/javac" source="${javaTarget}" target="${javaTarget}"
+               encoding="UTF-8" includeantruntime="false">
+            <classpath>
+                <pathelement location="${classes.dir}"/>
+                <path refid="cp"/>
+            </classpath>
+            <compilerarg value="-Xlint:-options"/>
+        </javac>
+
+        <path id="test.classpath">
+            <pathelement location="${classes.dir}"/>
+            <pathelement location="${build.dir}/test-classes"/>
+            <path refid="cp"/>
+        </path>
+
+        <java classname="ProfileScopeTest" fork="true" failonerror="true"
+              jvm="${java_home}/bin/java">
+            <classpath refid="test.classpath"/>
+        </java>
+
+        <java classname="ProfileRedirectTest" fork="true" failonerror="true"
+              jvm="${java_home}/bin/java">
+            <classpath refid="test.classpath"/>
+            <arg file="${build.dir}/test-stubs"/>
+        </java>
+    </target>
+
     <target name="shadow" depends="compile">
 
         <jar destfile="${temp.dir}/${artifact}-${version}-fat.jar">

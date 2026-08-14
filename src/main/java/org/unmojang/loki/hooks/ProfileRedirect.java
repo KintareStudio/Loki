@@ -154,9 +154,10 @@ public final class ProfileRedirect {
         String profileApi = declaration.optString(STATUS_FIELD, "");
         if (profileApi.length() == 0) return;
         profileApi = canonicalize(profileApi);
-        if (profileApi == null) return;
+        if (profileApi == null || !allowsCleartext(profileApi)) return;
 
         String apiRoot = followApiLocation(profileApi);
+        if (!allowsCleartext(apiRoot)) return; // the redirect header could point elsewhere
         readSkinDomains(discovery, apiRoot);
 
         discovery.account = apiRoot + "/api";
@@ -181,6 +182,44 @@ public final class ProfileRedirect {
             return null;
         }
         return canonical;
+    }
+
+    /**
+     * Whether a declaration is allowed to be cleartext.
+     * <p>
+     * A game server must not be able to move profile lookups onto plain HTTP, so an {@code http://}
+     * declaration is only honoured where cleartext was already on the table: a private or loopback
+     * address, which is how LAN and test servers are reached, or a configured API server that is
+     * itself {@code http://}, in which case the user has already accepted it.
+     */
+    static boolean allowsCleartext(String url) {
+        if (url == null || !url.startsWith("http://")) return true;
+
+        String host;
+        try {
+            host = new URL(url).getHost();
+        } catch (Exception e) {
+            return false;
+        }
+        if (isPrivateHost(host)) return true;
+        if (System.getProperty("minecraft.api.session.host", "https://sessionserver.mojang.com")
+                .startsWith("http://")) return true;
+
+        log.warn("Ignoring cleartext profile API declaration: " + url);
+        return false;
+    }
+
+    private static boolean isPrivateHost(String host) {
+        if ("localhost".equals(host) || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+        if (host.startsWith("127.") || "::1".equals(host) || "[::1]".equals(host)) return true;
+        if (host.startsWith("10.") || host.startsWith("192.168.")) return true;
+        if (!host.startsWith("172.")) return false;
+        try { // 172.16.0.0/12
+            int second = Integer.parseInt(host.split("\\.")[1]);
+            return second >= 16 && second <= 31;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     /** Mirrors what Loki does for the primary API server, so a bare site root also works. */

@@ -37,5 +37,7 @@ Run `ant` to build. Your compiled jar will be placed in `build/dist/Loki-x.x.x.j
 
 You *can* build with Java 9 or later, however your build will lack Java 5-7 support. To do this, use `ant -DjavaTarget=1.8`
 
+Run `ant test` for the tests. They stand up their own servers and do not touch the network.
+
 ## FAQ
 See [doc/faq.md](doc/faq.md)

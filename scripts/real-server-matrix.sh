@@ -34,6 +34,15 @@ jdk_for() {
     esac
 }
 
+# One agent for the whole matrix. It is version independent, so rebuilding per version only buys
+# the chance of failing halfway through, which is exactly what it did.
+if [ -z "$LOKI_TEST_SKIP_BUILD" ]; then
+    sh "$here/build-agent.sh" || exit 1
+    LOKI_TEST_SKIP_BUILD=1
+    export LOKI_TEST_SKIP_BUILD
+    echo
+fi
+
 passed=""
 failed=""
 skipped=""

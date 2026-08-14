@@ -57,11 +57,11 @@ echo "== $version =="
 say "EULA: this run writes eula=true into $work, accepting https://aka.ms/MinecraftEULA"
 
 # ----------------------------------------------------------------- build and fetch
-# Always, rather than only when the jar is missing. A stale agent quietly tests the code you had
-# before you changed it, which is the one outcome this whole exercise cannot afford.
+# Rebuilt unless someone already did it: a stale agent quietly tests the code you had before you
+# changed it, which is the one outcome this whole exercise cannot afford. The matrix builds once up
+# front and sets LOKI_TEST_SKIP_BUILD, since the same jar serves every version.
 if [ -z "$LOKI_TEST_SKIP_BUILD" ]; then
-    (cd "$root" && ant > "$root/build/real-server/build.log" 2>&1) \
-        || { echo "  build failed, see $root/build/real-server/build.log" >&2; exit 1; }
+    sh "$root/scripts/build-agent.sh" || exit 1
 fi
 agent=$(ls "$root/build/dist"/Loki-*.jar | head -1)
 say "agent: $(basename "$agent") ($(date -r "$agent" '+%H:%M:%S'))"

@@ -123,6 +123,28 @@ public final class NettyBridge {
         }
     }
 
+    /**
+     * Builds a {@code ByteBuf} holding the given bytes, in whichever Netty the game is using.
+     *
+     * @param sample any {@code ByteBuf}, used only to find where Netty's buffer package lives
+     */
+    public static Object wrapBytes(Object sample, byte[] data) throws Exception {
+        String bufferClass = sample.getClass().getName();
+        int packageEnd = bufferClass.lastIndexOf('.');
+        Class<?> unpooled = Class.forName(bufferClass.substring(0, packageEnd + 1) + "Unpooled",
+                false, sample.getClass().getClassLoader());
+        return unpooled.getMethod("wrappedBuffer", byte[].class).invoke(null, (Object) data);
+    }
+
+    /** Drops a reference to a message Loki is replacing, so its buffer goes back to the pool. */
+    public static void release(Object message) {
+        try {
+            call(message, "release", new Object[0]);
+        } catch (Throwable ignored) {
+            // Not reference counted, or already released
+        }
+    }
+
     /** Takes a handler out of the pipeline it is running in, from inside one of its own callbacks. */
     public static void removeSelf(Object ctx) {
         try {

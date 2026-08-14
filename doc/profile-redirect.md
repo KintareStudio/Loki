@@ -20,7 +20,12 @@ about anyone. This feature matters where the client does the asking:
 
 ## Server side
 
-Add a `loki` object to your Server List Ping response:
+Nothing to do, if the server runs Loki. It already knows which API server it was pointed at, so it
+puts that in its own Server List Ping response, splicing the key into the document on its way out
+rather than reparsing it. Turn it off with `-DLoki.disable_profile_advertise=true`.
+
+For a server that does not run Loki, or one that wants to name an API server other than its own, add
+a `loki` object to the Server List Ping response yourself:
 
 ```json
 {

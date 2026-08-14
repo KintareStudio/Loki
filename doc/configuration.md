@@ -44,6 +44,11 @@ Loki supports JVM arguments to enable or disable some behaviour.
   -DLoki.disable_profile_redirect=true
   ```
 
+- Stop a server declaring its own API server to Loki clients [^3]
+  ```
+  -DLoki.disable_profile_advertise=true
+  ```
+
 - Re-enable patchy (server blocking)
   ```
   -DLoki.enable_patchy=true

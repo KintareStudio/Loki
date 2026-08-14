@@ -12,6 +12,7 @@ public class Loki {
     public static final boolean chat_restrictions =  Boolean.getBoolean("Loki.chat_restrictions");
     public static boolean disable_factory = Boolean.getBoolean("Loki.disable_factory");
     public static final boolean disable_profile_lookup = Boolean.getBoolean("Loki.disable_profile_lookup");
+    public static final boolean disable_profile_advertise = Boolean.getBoolean("Loki.disable_profile_advertise");
     public static final boolean disable_profile_redirect = Boolean.getBoolean("Loki.disable_profile_redirect");
     public static final boolean enable_patchy =  Boolean.getBoolean("Loki.enable_patchy");
     public static final boolean enable_snooper =  Boolean.getBoolean("Loki.enable_snooper");
@@ -47,6 +48,7 @@ public class Loki {
 		                                                                 1.7-1.18.2 (deprecated in 1.19) */
         inst.addTransformer(new FetchTexturesByPlayerNameTransformer()); // Fetch textures on offline mode servers
         inst.addTransformer(new NettyConnectTransformer()); // Let a server redirect profile queries. 1.7+
+        inst.addTransformer(new NettyBindTransformer()); // Declare this server's API server to Loki clients. 1.7+
 
         // Public keys
         inst.addTransformer(new MainArgsTransformer()); // secure-profile breaks if userType is "mojang" on 1.19.3-1.21.8

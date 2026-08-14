@@ -1,5 +1,6 @@
 package org.unmojang.loki.util;
 
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -59,6 +60,22 @@ public final class Protocol {
         byte[] bytes = new byte[length];
         in.readFully(bytes);
         return new String(bytes, "UTF-8");
+    }
+
+    /** Frames a status response around a JSON document, ready to go out on the wire. */
+    public static byte[] statusResponse(String json) throws IOException {
+        ByteArrayOutputStream payload = new ByteArrayOutputStream();
+        DataOutputStream packet = new DataOutputStream(payload);
+        writeVarInt(packet, PACKET_STATUS_RESPONSE);
+        writeString(packet, json);
+        packet.flush();
+
+        ByteArrayOutputStream frame = new ByteArrayOutputStream();
+        DataOutputStream framed = new DataOutputStream(frame);
+        writeVarInt(framed, payload.size());
+        framed.write(payload.toByteArray());
+        framed.flush();
+        return frame.toByteArray();
     }
 
     /**

@@ -39,6 +39,8 @@ public class Hooks {
             });
     private static final ConcurrentHashMap<String, TextureEntry> uuidToTexturesCache = new ConcurrentHashMap<String, TextureEntry>();
     private static final long TEXTURE_CACHE_TTL_MS = 300000L; // 5 minutes
+    /** How long a profile lookup will wait for an in-flight server profile API discovery. */
+    private static final long DISCOVERY_WAIT_MS = 2000L;
     private static volatile long textureRateLimitUntil = 0L;
 
     private static final int NEGATIVE_CACHE_MAX = 512;
@@ -61,7 +63,10 @@ public class Hooks {
 
     private static final HttpUtil.ConnectionFactory ACCOUNT_API = new HttpUtil.ConnectionFactory() {
         public HttpURLConnection open(String pathSuffix) throws Exception {
-            String base = System.getProperty("minecraft.api.account.host", "https://api.mojang.com");
+            // Only ever reached from the UUID batcher's own thread, so waiting here is safe
+            ProfileRedirect.awaitDiscovery(DISCOVERY_WAIT_MS);
+            String base = ProfileRedirect.accountBase();
+            if (base == null) base = System.getProperty("minecraft.api.account.host", "https://api.mojang.com");
             return (HttpURLConnection) new URL(base + pathSuffix).openConnection();
         }
     };
@@ -74,6 +79,34 @@ public class Hooks {
             return HttpUtil.singleLookupUUID(ACCOUNT_API, username);
         }
     });
+
+    /**
+     * Whether authlib may load a texture from this URL.
+     * <p>
+     * Resolved at call time rather than baked into the patched method, because the allowlist can
+     * grow after the class was loaded: a server that redirects profile queries also contributes the
+     * skin domains of the API server it points at.
+     * <p>
+     * An empty allowlist means the API server never declared {@code skinDomains}, which is Loki's
+     * long-standing "allow anything" case and must stay that way.
+     */
+    public static boolean isAllowedTextureDomain(String url) {
+        String host;
+        try {
+            host = new URL(url).getHost();
+        } catch (Exception e) {
+            return false;
+        }
+        if (host.endsWith(".minecraft.net") || host.endsWith(".mojang.com")) return true;
+
+        String allowlist = System.getProperty(ProfileRedirect.PROP_TEXTURE_DOMAINS, "");
+        if (allowlist.length() == 0) return true;
+        String[] domains = allowlist.split(",");
+        for (String domain : domains) {
+            if (domain.length() != 0 && host.endsWith(domain)) return true;
+        }
+        return false;
+    }
 
     public static Object constantSupplier(final Object value) {
         try {
@@ -429,8 +462,12 @@ public class Hooks {
     }
 
     private static String[] fetchTexturesData(String uuid) throws Exception {
-        URL url = new URL(System.getProperty("minecraft.api.session.host", "https://sessionserver.mojang.com")
-                + "/session/minecraft/profile/" + URLEncoder.encode(uuid, "UTF-8") + "?unsigned=false");
+        // Only ever reached from TEXTURE_FETCH_POOL, so waiting here is safe
+        ProfileRedirect.awaitDiscovery(DISCOVERY_WAIT_MS);
+        String base = ProfileRedirect.sessionBase();
+        if (base == null) base = System.getProperty("minecraft.api.session.host", "https://sessionserver.mojang.com");
+        URL url = new URL(base + "/session/minecraft/profile/"
+                + URLEncoder.encode(uuid, "UTF-8") + "?unsigned=false");
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
         conn.setConnectTimeout(5000);

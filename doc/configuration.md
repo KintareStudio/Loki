@@ -39,6 +39,11 @@ Loki supports JVM arguments to enable or disable some behaviour.
   -DLoki.disable_profile_lookup=true
   ```
 
+- Ignore a server's declared profile API [^3]
+  ```
+  -DLoki.disable_profile_redirect=true
+  ```
+
 - Re-enable patchy (server blocking)
   ```
   -DLoki.enable_patchy=true
@@ -104,4 +109,5 @@ ServicesHost: https://drasl.unmojang.org/services
 ```
 
 [^1]: Username-based profile lookups allow for displaying textures on offline mode servers.
+[^3]: A 1.7+ server can name an API server for Loki to resolve profile queries against, so players are visible even when the client and the server do not share an API server. Only profile reads are affected; see [profile-redirect.md](profile-redirect.md).
 [^2]: This option is **NOT** necessary to ensure the integrity of chat reports made to the API server from clients, and will kick [fallback API server](https://github.com/unmojang/drasl/blob/master/doc/configuration.md) players.

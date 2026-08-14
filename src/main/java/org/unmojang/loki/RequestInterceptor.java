@@ -2,6 +2,7 @@ package org.unmojang.loki;
 
 import org.unmojang.loki.hooks.Hooks;
 import org.unmojang.loki.hooks.LauncherHooks;
+import org.unmojang.loki.hooks.ProfileRedirect;
 import org.unmojang.loki.util.HttpUtil;
 import sun.misc.Unsafe;
 
@@ -135,6 +136,8 @@ public class RequestInterceptor {
             }
         }
         if (YGGDRASIL_MAP.containsKey(host)) { // yggdrasil
+            URLConnection redirected = profileRedirect(originalUrl, (HttpURLConnection) originalConn, host, path, query);
+            if (redirected != null) return redirected;
             try {
                 final URL targetUrl = Ygglib.getYggdrasilUrl(originalUrl, originalConn);
                 Loki.log.info("Intercepting " + host + " request");
@@ -366,6 +369,48 @@ public class RequestInterceptor {
         }
 
         return originalConn;
+    }
+
+    /**
+     * Sends a profile <em>read</em> to the API server the game server declared, if it declared one.
+     * <p>
+     * Returns null to leave the request alone, which is what happens for everything outside
+     * {@link ProfileRedirect#baseFor}'s allowlist: authentication, join/hasJoined, certificates,
+     * public keys and the rest keep going to the configured API server.
+     */
+    private static URLConnection profileRedirect(URL originalUrl, HttpURLConnection originalConn,
+                                                 String host, String path, String query) {
+        try {
+            String base = ProfileRedirect.baseFor(host, path);
+            if (base == null) return null;
+            if (ProfileRedirect.carriesCredentials(originalConn.getRequestProperty("Authorization"), query)) {
+                Loki.log.debug("Refusing to redirect " + originalUrl + ", it carries credentials");
+                return null;
+            }
+
+            URL targetUrl = new URL(base + path + (query != null && query.length() != 0 ? "?" + query : ""));
+            Loki.log.info("Redirecting profile query to the API server declared by the game server");
+            Loki.log.debug(originalUrl + " -> " + targetUrl);
+
+            HttpURLConnection targetConn = mirrorHttpURLConnection(targetUrl, originalConn);
+            if (!"sessionserver.mojang.com".equals(host)) return targetConn;
+
+            // The profile endpoint is the only redirected response carrying properties, and a
+            // server-declared API server has no business supplying anything but textures.
+            int code = targetConn.getResponseCode();
+            if (code != 200) {
+                targetConn.disconnect();
+                return Ygglib.FakeURLConnection(originalUrl, originalConn, code, null);
+            }
+            String profile = HttpUtil.readStream(targetConn.getInputStream());
+            return Ygglib.FakeURLConnection(originalUrl, originalConn, 200,
+                    Hooks.transformProfileJson(profile).getBytes("UTF-8"));
+        } catch (Exception e) {
+            // Fail open: an unreachable or broken declared API server must not take the configured
+            // one down with it, so the request falls through to normal handling.
+            Loki.log.error("Failed to redirect profile query " + originalUrl, e);
+            return null;
+        }
     }
 
     public static HttpURLConnection mirrorHttpURLConnection(URL targetUrl, HttpURLConnection httpConn) throws IOException {

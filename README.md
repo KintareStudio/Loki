@@ -17,6 +17,12 @@ See [doc/usage.md](doc/usage.md) to learn how to use Loki on clients and servers
 
 See [doc/configuration.md](doc/configuration.md) for documentation of the configuration options.
 
+## Server-declared profile API
+
+A server can point Loki clients at its own API server for profile queries, so players are visible
+even when the client and the server do not share an API server. See
+[doc/profile-redirect.md](doc/profile-redirect.md).
+
 ## Troubleshooting
 
 [doc/troubleshooting.md](doc/troubleshooting.md) has some helpful tips, but it's not complete. Feel free to file an issue if you're having problems.

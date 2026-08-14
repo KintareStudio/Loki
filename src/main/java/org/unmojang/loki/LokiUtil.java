@@ -292,9 +292,15 @@ public class LokiUtil {
 
             Json.JSONArray skinDomainsArr = json.optJSONArray("skinDomains");
             if (skinDomainsArr != null && !skinDomainsArr.isEmpty() && SERVER_TEXTURE_DOMAINS.isEmpty()) {
+                StringBuilder domains = new StringBuilder();
                 for (int i = 0; i < skinDomainsArr.length(); i++) {
                     SERVER_TEXTURE_DOMAINS.add(skinDomainsArr.getString(i));
+                    if (i > 0) domains.append(",");
+                    domains.append(skinDomainsArr.getString(i));
                 }
+                // Hooks.isAllowedTextureDomain reads this; it cannot see SERVER_TEXTURE_DOMAINS,
+                // since the hooks package has to stay loadable from the bootstrap classloader.
+                System.setProperty(ProfileRedirect.PROP_TEXTURE_DOMAINS, domains.toString());
                 Loki.log.debug("Added texture domains: " + SERVER_TEXTURE_DOMAINS);
             }
         } catch (Exception e) {

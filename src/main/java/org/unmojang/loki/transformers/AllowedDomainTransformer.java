@@ -6,8 +6,6 @@ import org.objectweb.asm.tree.*;
 import org.unmojang.loki.Loki;
 import org.unmojang.loki.LokiUtil;
 
-import java.util.List;
-
 public class AllowedDomainTransformer extends LokiTransformer {
 
     protected boolean matches(String className) {
@@ -34,14 +32,17 @@ public class AllowedDomainTransformer extends LokiTransformer {
                 mn.tryCatchBlocks.clear();
                 if (mn.localVariables != null) mn.localVariables.clear();
 
-                List<String> skinDomains = LokiUtil.SERVER_TEXTURE_DOMAINS;
-                if (skinDomains.isEmpty()) { // allow any skin domain
-                    mn.instructions.add(new InsnNode(Opcodes.ICONST_1));
-                    mn.instructions.add(new InsnNode(Opcodes.IRETURN));
-                } else {
-                    int urlSlot = (mn.access & Opcodes.ACC_STATIC) != 0 ? 0 : 1; // <=26.2 : 26.3+
-                    buildDomainCheck(mn, skinDomains, urlSlot, urlSlot + 1);
-                }
+                // Delegate rather than bake the domains in: the allowlist is not final at class
+                // load time any more, since a server can redirect profile queries at runtime and
+                // contribute the skin domains that come with them.
+                int urlSlot = (mn.access & Opcodes.ACC_STATIC) != 0 ? 0 : 1; // <=26.2 : 26.3+
+                mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, urlSlot));
+                mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
+                        "org/unmojang/loki/hooks/Hooks",
+                        "isAllowedTextureDomain",
+                        "(Ljava/lang/String;)Z",
+                        false));
+                mn.instructions.add(new InsnNode(Opcodes.IRETURN));
 
                 Loki.log.debug("Patching " + LokiUtil.getFqmn(className, mn.name, mn.desc));
                 changed = true;
@@ -64,53 +65,4 @@ public class AllowedDomainTransformer extends LokiTransformer {
         return changed;
     }
 
-    private static void buildDomainCheck(MethodNode mn, List<String> skinDomains, int urlSlot, int hostSlot) {
-        LabelNode tryStart = new LabelNode();
-        LabelNode tryEnd = new LabelNode();
-        LabelNode handler = new LabelNode();
-        LabelNode returnTrue = new LabelNode();
-
-        mn.tryCatchBlocks.add(new TryCatchBlockNode(tryStart, tryEnd, handler, "java/lang/Exception"));
-
-        InsnList il = mn.instructions;
-
-        // host = new URL(url).getHost()
-        il.add(tryStart);
-        il.add(new TypeInsnNode(Opcodes.NEW, "java/net/URL"));
-        il.add(new InsnNode(Opcodes.DUP));
-        il.add(new VarInsnNode(Opcodes.ALOAD, urlSlot));
-        il.add(new MethodInsnNode(Opcodes.INVOKESPECIAL, "java/net/URL", "<init>", "(Ljava/lang/String;)V", false));
-        il.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, "java/net/URL", "getHost", "()Ljava/lang/String;", false));
-        il.add(tryEnd);
-        il.add(new VarInsnNode(Opcodes.ASTORE, hostSlot));
-
-        // Default domains: host.endsWith(".minecraft.net"), host.endsWith(".mojang.com")
-        for (String d : new String[]{".minecraft.net", ".mojang.com"}) {
-            il.add(new VarInsnNode(Opcodes.ALOAD, hostSlot));
-            il.add(new LdcInsnNode(d));
-            il.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, "java/lang/String", "endsWith", "(Ljava/lang/String;)Z", false));
-            il.add(new JumpInsnNode(Opcodes.IFNE, returnTrue));
-        }
-
-        // Skin domains: host.endsWith(d)
-        for (String d : skinDomains) {
-            il.add(new VarInsnNode(Opcodes.ALOAD, hostSlot));
-            il.add(new LdcInsnNode(d));
-            il.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, "java/lang/String", "endsWith", "(Ljava/lang/String;)Z", false));
-            il.add(new JumpInsnNode(Opcodes.IFNE, returnTrue));
-        }
-
-        il.add(new InsnNode(Opcodes.ICONST_0));
-        il.add(new InsnNode(Opcodes.IRETURN));
-
-        il.add(returnTrue);
-        il.add(new InsnNode(Opcodes.ICONST_1));
-        il.add(new InsnNode(Opcodes.IRETURN));
-
-        // Exception handler: return false
-        il.add(handler);
-        il.add(new InsnNode(Opcodes.POP));
-        il.add(new InsnNode(Opcodes.ICONST_0));
-        il.add(new InsnNode(Opcodes.IRETURN));
-    }
 }

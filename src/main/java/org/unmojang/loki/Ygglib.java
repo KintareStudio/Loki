@@ -2,6 +2,7 @@ package org.unmojang.loki;
 
 import org.unmojang.loki.hooks.Hooks;
 import org.unmojang.loki.hooks.LauncherHooks;
+import org.unmojang.loki.hooks.ProfileRedirect;
 import org.unmojang.loki.util.Base64;
 import org.unmojang.loki.util.HttpUtil;
 import org.unmojang.loki.util.Json;
@@ -53,7 +54,10 @@ public class Ygglib {
 
     private static final HttpUtil.ConnectionFactory ACCOUNT_API = new HttpUtil.ConnectionFactory() {
         public HttpURLConnection open(String pathSuffix) throws Exception {
-            URL url = getYggdrasilUrl(new URL("https://api.mojang.com" + pathSuffix), null);
+            String redirect = ProfileRedirect.accountBase();
+            URL url = redirect != null
+                    ? new URL(redirect + pathSuffix)
+                    : getYggdrasilUrl(new URL("https://api.mojang.com" + pathSuffix), null);
             URLStreamHandler handler = Hooks.DEFAULT_HANDLERS.get(url.getProtocol());
             return RequestInterceptor.openWithParent(url, handler);
         }
@@ -88,8 +92,11 @@ public class Ygglib {
     @SuppressWarnings("BusyWait")
     public static String getTexturesProperty(String uuid, boolean returnProfileJson) throws Exception {
         try {
-            URL textureUrl = new URL("https://sessionserver.mojang.com/session/minecraft/profile/" + URLEncoder.encode(uuid, "UTF-8") + "?unsigned=false");
-            textureUrl = getYggdrasilUrl(textureUrl, null);
+            String profilePath = "/session/minecraft/profile/" + URLEncoder.encode(uuid, "UTF-8") + "?unsigned=false";
+            String redirect = ProfileRedirect.sessionBase();
+            URL textureUrl = redirect != null
+                    ? new URL(redirect + profilePath)
+                    : getYggdrasilUrl(new URL("https://sessionserver.mojang.com" + profilePath), null);
             URLStreamHandler handler = Hooks.DEFAULT_HANDLERS.get(textureUrl.getProtocol());
 
             for (int attempt = 0; ; attempt++) {
@@ -129,7 +136,11 @@ public class Ygglib {
             Json.JSONObject skinOrCape = texturesObj.getJSONObject(type);
             String textureUrl = skinOrCape.getString("url");
             if (textureUrl == null) return FakeURLConnection(originalUrl, originalConn, 204, null);
-            if (RequestInterceptor.YGGDRASIL_MAP.get("sessionserver.mojang.com").startsWith("http://")) {
+            // Follow whichever session server actually served this profile, and tolerate it being
+            // unset: an API server may be configured through the services host alone.
+            String sessionHost = ProfileRedirect.sessionBase();
+            if (sessionHost == null) sessionHost = RequestInterceptor.YGGDRASIL_MAP.get("sessionserver.mojang.com");
+            if (sessionHost != null && sessionHost.startsWith("http://")) {
                 textureUrl = textureUrl.replaceFirst("^https://", "http://");
             }
 

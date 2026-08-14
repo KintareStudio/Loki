@@ -69,22 +69,23 @@ function ConvertTo-BashPath([string] $path) {
 $bash = Find-Bash
 $scripts = Split-Path -Parent $PSCommandPath
 
-if (-not $Jdk8) { $Jdk8 = $env:LOKI_JDK8 }
-if (-not $Jdk17) { $Jdk17 = $env:LOKI_JDK17 }
-if (-not $Jdk21) { $Jdk21 = $env:LOKI_JDK21 }
-if (-not $Jdk8) { $Jdk8 = Find-Jdk 8 }
-if (-not $Jdk17) { $Jdk17 = Find-Jdk 17 }
-if (-not $Jdk21) { $Jdk21 = Find-Jdk 21 }
+# Every major a Minecraft release has ever asked for, so a new one only needs adding here
+$majors = @(8, 11, 16, 17, 21, 25)
+$overrides = @{ 8 = $Jdk8; 17 = $Jdk17; 21 = $Jdk21 }
 
-foreach ($jdk in @(@{ n = 'JDK 8'; v = $Jdk8 }, @{ n = 'JDK 17'; v = $Jdk17 }, @{ n = 'JDK 21'; v = $Jdk21 })) {
-    if ($jdk.v) { Write-Host ("  {0,-7} {1}" -f $jdk.n, $jdk.v) }
-    else { Write-Host ("  {0,-7} not found, versions needing it will be skipped" -f $jdk.n) }
+foreach ($major in $majors) {
+    $path = $overrides[$major]
+    if (-not $path) { $path = [Environment]::GetEnvironmentVariable("LOKI_JDK$major") }
+    if (-not $path) { $path = Find-Jdk $major }
+
+    if ($path) {
+        Write-Host ("  JDK {0,-3} {1}" -f $major, $path)
+        Set-Item "env:LOKI_JDK$major" (ConvertTo-BashPath $path)
+    } else {
+        Write-Host ("  JDK {0,-3} not found, versions needing it will be skipped" -f $major)
+    }
 }
 Write-Host ""
-
-$env:LOKI_JDK8 = ConvertTo-BashPath $Jdk8
-$env:LOKI_JDK17 = ConvertTo-BashPath $Jdk17
-$env:LOKI_JDK21 = ConvertTo-BashPath $Jdk21
 
 $matrix = ConvertTo-BashPath (Join-Path $scripts 'real-server-matrix.sh')
 & $bash $matrix @Versions

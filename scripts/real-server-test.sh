@@ -21,10 +21,7 @@ if [ -z "$version" ]; then
     exit 2
 fi
 
-java_home=${2:-$JAVA_HOME}
-java_bin="java"
-[ -n "$java_home" ] && java_bin="$java_home/bin/java"
-
+java_home=$2
 root=$(cd "$(dirname "$0")/.." && pwd)
 work="$root/build/real-server/$version"
 port=${LOKI_TEST_PORT:-25599}
@@ -71,7 +68,7 @@ manifest="$root/build/real-server/version_manifest_v2.json"
 [ -f "$manifest" ] || curl -sS --max-time 60 -o "$(topath "$manifest")" \
     https://piston-meta.mojang.com/mc/game/version_manifest_v2.json
 
-if [ ! -f "$work/server.jar" ]; then
+if [ ! -f "$work/version.json" ]; then
     version_url=$(grep -o "{\"id\": \"$version\", \"type\": \"[a-z]*\", \"url\": \"[^\"]*\"" "$manifest" \
         | head -1 | grep -o 'https://[^"]*')
     if [ -z "$version_url" ]; then
@@ -79,6 +76,23 @@ if [ ! -f "$work/server.jar" ]; then
         exit 1
     fi
     curl -sS --max-time 60 -o "$(topath "$work/version.json")" "$version_url"
+fi
+
+# Mojang says which Java a version needs, so ask rather than keep a table of guesses in step with
+# them. Versions old enough to predate the field are the ones that want 8.
+needs_java=$(grep -o '"majorVersion": *[0-9]*' "$work/version.json" | head -1 | grep -o '[0-9]*')
+[ -n "$needs_java" ] || needs_java=8
+if [ -z "$java_home" ]; then
+    java_home=$(eval "echo \${LOKI_JDK$needs_java:-}")
+fi
+if [ -z "$java_home" ]; then
+    echo "  $version needs Java $needs_java; set LOKI_JDK$needs_java to a JDK $needs_java" >&2
+    exit 3
+fi
+say "java $needs_java: $java_home"
+java_bin="$java_home/bin/java"
+
+if [ ! -f "$work/server.jar" ]; then
     server_url=$(tr ',' '\n' < "$work/version.json" | grep -A2 '"server"' \
         | grep -o 'https://[^"]*server.jar' | head -1)
     [ -n "$server_url" ] || server_url=$(grep -o 'https://[^"]*/server.jar' "$work/version.json" | head -1)
@@ -156,14 +170,13 @@ start_and_ping() {
     return 0
 }
 
-# The pinger lives with the tests, so make sure it is compiled
-mkdir -p "$root/build/test-classes"
-javac_bin="javac"
-[ -n "$java_home" ] && javac_bin="$java_home/bin/javac"
-"$javac_bin" -cp "$(topath "$root/build/classes")" -d "$(topath "$root/build/test-classes")" \
+# Compiled per version, with that version's JDK, because a shared directory would hand a class file
+# built by Java 25 to the Java 8 run that comes after it.
+mkdir -p "$work/pinger"
+"$java_home/bin/javac" -cp "$(topath "$root/build/classes")" -d "$(topath "$work/pinger")" \
     "$(topath "$root/src/test/java/ServerPing.java")"
 
-classpath="$(topath "$root/build/classes")$cp_sep$(topath "$root/build/test-classes")"
+classpath="$(topath "$root/build/classes")$cp_sep$(topath "$work/pinger")"
 
 cd "$work"
 

@@ -263,6 +263,15 @@ public class LokiUtil {
         }
     }
 
+    /** Turns one PEM armoured key into the Base64 DER {@code ProfileKeys} reads, if it is one. */
+    private static void appendKey(StringBuilder keys, String pem) {
+        if (pem == null) return;
+        String der = pem.replaceAll("-----[A-Z ]+-----", "").replaceAll("\\s", "");
+        if (der.length() == 0) return;
+        if (keys.length() != 0) keys.append(",");
+        keys.append(der);
+    }
+
     private static void initServerMetadata(String authlibInjectorApiLocation) {
         if (Hooks.OFFLINE_MODE) {
             SERVER_NAME = "Offline";
@@ -302,6 +311,26 @@ public class LokiUtil {
                 }
                 System.setProperty(ProfileRedirect.PROP_TEXTURE_DOMAINS, domains.toString());
                 Loki.log.debug("Added texture domains: " + domains);
+            }
+
+            // Signing keys, for the same reason and by the same route. This document is where
+            // authlib-injector expresses rotation, so it is a better source than /publickeys, and
+            // reading it here costs nothing: the request has already been made.
+            // Each key is armoured PEM, so strip them one at a time and only then join: doing it
+            // the other way round would fuse the whole list into one unreadable blob.
+            StringBuilder signatureKeys = new StringBuilder();
+            Json.JSONArray signatureKeysArr = json.optJSONArray("signaturePublickeys");
+            if (signatureKeysArr != null) {
+                for (int i = 0; i < signatureKeysArr.length(); i++) {
+                    appendKey(signatureKeys, signatureKeysArr.getString(i));
+                }
+            }
+            if (signatureKeys.length() == 0) {
+                appendKey(signatureKeys, json.optString("signaturePublickey", ""));
+            }
+            if (signatureKeys.length() != 0) {
+                System.setProperty(ProfileKeys.PROP_SIGNATURE_KEYS, signatureKeys.toString());
+                Loki.log.debug("Added signing keys from authlib-injector metadata");
             }
         } catch (Exception e) {
             Loki.log.error("Failed to get server metadata", e);

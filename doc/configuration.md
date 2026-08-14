@@ -54,7 +54,7 @@ Loki supports JVM arguments to enable or disable some behaviour.
   -DLoki.enable_snooper=true
   ```
 
-- Require valid chat signatures on 1.19+ servers where `enforce-secure-profile=true` is set in `server.properties` [^2]
+- Verify signatures instead of accepting them: profile properties from 1.7.6, player certificates from 1.19, and chat on 1.19+ servers where `enforce-secure-profile=true` is set in `server.properties` [^2] [^4]
   ```
   -DLoki.enforce_secure_profile=true
   ```
@@ -110,4 +110,5 @@ ServicesHost: https://drasl.unmojang.org/services
 
 [^1]: Username-based profile lookups allow for displaying textures on offline mode servers.
 [^3]: A 1.7+ server can name an API server for Loki to resolve profile queries against, so players are visible even when the client and the server do not share an API server. Only profile reads are affected; see [profile-redirect.md](profile-redirect.md).
+[^4]: Without this, the signature checks return true without looking, which is what lets an API server that does not sign at all work. With it, they are checked against every key the API server publishes — `signaturePublickeys` in authlib-injector metadata, or `profilePropertyKeys` and `playerCertificateKeys` from `/publickeys` — plus Mojang's own key, which authlib bundles up to 1.19.4 and which is what makes a profile proxied from a fallback API server verify. Trusting a set rather than one key is also what keeps a key rotation from turning every player into Steve. The two kinds of key are kept apart: a property key cannot vouch for a certificate or the other way round. Which method is asked depends on the version — `Property.isSignatureValid` up to 1.18.2, `ServicesKeyInfo.validateProperty` and `ServicesKeyInfo.signature` from 1.19. Note that an **unsigned** property is still rejected before Loki sees it, by `hasSignature`.
 [^2]: This option is **NOT** necessary to ensure the integrity of chat reports made to the API server from clients, and will kick [fallback API server](https://github.com/unmojang/drasl/blob/master/doc/configuration.md) players.

@@ -133,6 +133,29 @@
             <classpath refid="test.classpath"/>
             <arg file="${build.dir}/test-stubs"/>
         </java>
+
+        <!-- One process per key source: which one is in play is decided once and cached, so
+             running them together would test whichever got there first and nothing else. -->
+        <java classname="ProfileSignatureTest" fork="true" failonerror="true"
+              jvm="${java_home}/bin/java">
+            <classpath refid="test.classpath"/>
+            <arg value="publickeys"/>
+            <arg file="${build.dir}/test-stubs"/>
+        </java>
+
+        <java classname="ProfileSignatureTest" fork="true" failonerror="true"
+              jvm="${java_home}/bin/java">
+            <classpath refid="test.classpath"/>
+            <arg value="metadata"/>
+            <arg file="${build.dir}/test-stubs"/>
+        </java>
+
+        <java classname="ProfileSignatureTest" fork="true" failonerror="true"
+              jvm="${java_home}/bin/java">
+            <classpath refid="test.classpath"/>
+            <arg value="offline"/>
+            <arg file="${build.dir}/test-stubs"/>
+        </java>
     </target>
 
     <target name="shadow" depends="compile">

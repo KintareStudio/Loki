@@ -5,6 +5,15 @@ import org.objectweb.asm.tree.*;
 import org.unmojang.loki.Loki;
 import org.unmojang.loki.LokiUtil;
 
+/**
+ * Redirects the 1.19+ signature checks at the keys the API server publishes.
+ * <p>
+ * Both methods that consult a key are replaced, so the {@code publicKey} field the class was built
+ * around is left alone: nothing reads it once these two are gone, since {@code keyBitCount} returns
+ * a constant in every authlib from 3.5.41 to 10.0.76. Overwriting it, as Loki used to, cost a
+ * request to {@code /publickeys} per construction and took the game down with it when that request
+ * failed, all to set a field no one would look at.
+ */
 public class ServicesKeyInfoTransformer extends LokiTransformer {
 
     protected boolean matches(String className) {
@@ -21,35 +30,27 @@ public class ServicesKeyInfoTransformer extends LokiTransformer {
         boolean changed = false;
 
         for (MethodNode mn : cn.methods) {
-            if (isKeyInfo && "<init>".equals(mn.name) && "(Ljava/security/PublicKey;)V".equals(mn.desc)) {
-                AbstractInsnNode ret = null;
-                for (AbstractInsnNode insn : mn.instructions.toArray()) {
-                    if (insn.getOpcode() == Opcodes.RETURN) {
-                        ret = insn;
-                    }
-                }
-                if (ret == null) throw new RuntimeException("could not find RETURN");
-
-                InsnList insns = new InsnList();
-                insns.add(new VarInsnNode(Opcodes.ALOAD, 0));
-                insns.add(new MethodInsnNode(
-                        Opcodes.INVOKESTATIC,
-                        "org/unmojang/loki/hooks/Hooks",
-                        "replaceYggdrasilServicesKeyInfoSignature",
-                        "(Ljava/lang/Object;)V",
-                        false
-                ));
-                mn.instructions.insertBefore(ret, insns);
-
-                Loki.log.debug("Patching " + LokiUtil.getFqmn(className, mn.name, mn.desc));
-                changed = true;
-            } else if (isKeyInfo && "validateProperty".equals(mn.name) && "(Lcom/mojang/authlib/properties/Property;)Z".equals(mn.desc)) {
+            if (isKeyInfo && "validateProperty".equals(mn.name) && "(Lcom/mojang/authlib/properties/Property;)Z".equals(mn.desc)) {
                 mn.instructions.clear();
                 mn.tryCatchBlocks.clear();
                 if (mn.localVariables != null) mn.localVariables.clear();
 
                 InsnList insns = new InsnList();
-                insns.add(new InsnNode(Opcodes.ICONST_1));
+                if (Loki.enforce_secure_profile) {
+                    // Against every key the API server publishes for profile properties, not
+                    // against the one this object happens to hold
+                    insns.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                    insns.add(new VarInsnNode(Opcodes.ALOAD, 1));
+                    insns.add(new MethodInsnNode(
+                            Opcodes.INVOKESTATIC,
+                            "org/unmojang/loki/hooks/ProfileKeys",
+                            "isPropertyValid",
+                            "(Ljava/lang/Object;Ljava/lang/Object;)Z",
+                            false
+                    ));
+                } else {
+                    insns.add(new InsnNode(Opcodes.ICONST_1));
+                }
                 insns.add(new InsnNode(Opcodes.IRETURN));
 
                 mn.instructions.add(insns);
@@ -57,20 +58,31 @@ public class ServicesKeyInfoTransformer extends LokiTransformer {
                 Loki.log.debug("Patching " + LokiUtil.getFqmn(className, mn.name, mn.desc));
                 changed = true;
             } else if (isKeyInfo && "signature".equals(mn.name) && "()Ljava/security/Signature;".equals(mn.desc)) {
-                if (Loki.enforce_secure_profile) continue; // preserve signature
-
                 mn.instructions.clear();
                 mn.tryCatchBlocks.clear();
                 if (mn.localVariables != null) mn.localVariables.clear();
 
                 InsnList insns = new InsnList();
-                insns.add(new MethodInsnNode(
-                        Opcodes.INVOKESTATIC,
-                        "org/unmojang/loki/hooks/Hooks",
-                        "createDummySignature",
-                        "()Ljava/security/Signature;",
-                        false
-                ));
+                if (Loki.enforce_secure_profile) {
+                    // This is what verifies a player's certificate, so it answers for the
+                    // certificate keys, and for all of them: one Signature, several keys behind it
+                    insns.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                    insns.add(new MethodInsnNode(
+                            Opcodes.INVOKESTATIC,
+                            "org/unmojang/loki/hooks/ProfileKeys",
+                            "certificateSignature",
+                            "(Ljava/lang/Object;)Ljava/security/Signature;",
+                            false
+                    ));
+                } else {
+                    insns.add(new MethodInsnNode(
+                            Opcodes.INVOKESTATIC,
+                            "org/unmojang/loki/hooks/Hooks",
+                            "createDummySignature",
+                            "()Ljava/security/Signature;",
+                            false
+                    ));
+                }
                 insns.add(new InsnNode(Opcodes.ARETURN));
 
                 mn.instructions.add(insns);

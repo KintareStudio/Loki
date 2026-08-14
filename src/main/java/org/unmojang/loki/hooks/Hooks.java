@@ -126,34 +126,43 @@ public class Hooks {
         }
     }
 
+    /**
+     * The key set 26.3+ asks the discovery service for.
+     * <p>
+     * A set, unlike what Loki used to hand back: the game asks it for the keys of one
+     * {@code ServicesKeyType} and then tries them all, so answering the same single key whatever was
+     * asked meant a profile property could be vouched for by a certificate key and the other way
+     * round. Each type now gets a key info that answers for that type and no other.
+     * <p>
+     * One entry per type is enough because that entry consults every published key of its type
+     * itself. Returning none is not the same as returning a permissive one, mind: the game's check
+     * is {@code noneMatch}, so an empty collection rejects everything.
+     */
     public static Object buildServicesKeySet(final ClassLoader cl) {
         try {
-            Class<?> keyInfoClass = Class.forName("com.mojang.authlib.services.ServicesKeyInfo", false, cl);
-            final Object keyInfo = Proxy.newProxyInstance(cl, new Class<?>[]{keyInfoClass},
-                    new InvocationHandler() {
-                        public Object invoke(Object proxy, Method method, Object[] args) {
-                            String name = method.getName();
-                            if ("validateProperty".equals(name)) return Boolean.TRUE;
-                            if ("signature".equals(name)) return servicesKeySignature();
-                            if ("keyBitCount".equals(name) || "signatureBitCount".equals(name)) return 4096;
-                            if ("hashCode".equals(name)) return System.identityHashCode(proxy);
-                            if ("equals".equals(name)) return proxy == args[0];
-                            if ("toString".equals(name)) return "LokiServicesKeyInfo";
-                            return null;
-                        }
-                    });
-            final List<Object> keys = Collections.singletonList(keyInfo);
-
+            final Class<?> keyInfoClass = Class.forName("com.mojang.authlib.services.ServicesKeyInfo", false, cl);
             Class<?> keySetClass = Class.forName("com.mojang.authlib.services.ServicesKeySet", false, cl);
+
             return Proxy.newProxyInstance(cl, new Class<?>[]{keySetClass},
                     new InvocationHandler() {
                         public Object invoke(Object proxy, Method method, Object[] args) {
                             String name = method.getName();
-                            if ("keys".equals(name)) return keys;
                             if ("hashCode".equals(name)) return System.identityHashCode(proxy);
                             if ("equals".equals(name)) return proxy == args[0];
                             if ("toString".equals(name)) return "LokiServicesKeySet";
-                            return Collections.emptyList();
+                            if (!"keys".equals(name)) return Collections.emptyList();
+
+                            String type = args != null && args.length != 0 ? keyTypeName(args[0]) : "";
+                            if (!Boolean.getBoolean("Loki.enforce_secure_profile")) {
+                                return Collections.singletonList(keyInfo(cl, keyInfoClass, type));
+                            }
+                            // Fail closed on a type this version of Loki does not know about,
+                            // rather than vouch for it with keys meant for something else
+                            if (!ProfileKeys.KEY_TYPE_PROPERTY.equals(type) && !ProfileKeys.KEY_TYPE_CERTIFICATE.equals(type)) {
+                                log.warn("Not answering for an unknown services key type: " + type);
+                                return Collections.emptyList();
+                            }
+                            return Collections.singletonList(keyInfo(cl, keyInfoClass, type));
                         }
                     });
         } catch (Exception e) {
@@ -161,19 +170,35 @@ public class Hooks {
         }
     }
 
-    private static volatile PublicKey servicesPublicKey;
 
-    private static Signature servicesKeySignature() {
-        if (!Boolean.getBoolean("Loki.enforce_secure_profile")) return createDummySignature();
-        try {
-            PublicKey key = servicesPublicKey;
-            if (key == null) servicesPublicKey = key = getPublicKey();
-            Signature signature = Signature.getInstance("SHA1withRSA");
-            signature.initVerify(key);
-            return signature;
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to build services key signature", e);
-        }
+    private static String keyTypeName(Object keyType) {
+        if (keyType instanceof Enum) return ((Enum<?>) keyType).name();
+        return String.valueOf(keyType);
+    }
+
+    /** A key info bound to one key type, which is what keeps the two kinds from vouching for each other. */
+    private static Object keyInfo(ClassLoader cl, Class<?> keyInfoClass, final String type) {
+        return Proxy.newProxyInstance(cl, new Class<?>[]{keyInfoClass},
+                new InvocationHandler() {
+                    public Object invoke(Object proxy, Method method, Object[] args) {
+                        String name = method.getName();
+                        if ("keyBitCount".equals(name) || "signatureBitCount".equals(name)) return 4096;
+                        if ("hashCode".equals(name)) return System.identityHashCode(proxy);
+                        if ("equals".equals(name)) return proxy == args[0];
+                        if ("toString".equals(name)) return "LokiServicesKeyInfo(" + type + ")";
+
+                        boolean enforcing = Boolean.getBoolean("Loki.enforce_secure_profile");
+                        if ("validateProperty".equals(name)) {
+                            if (!enforcing) return Boolean.TRUE;
+                            // A property is a property whichever list this info came from
+                            return Boolean.valueOf(ProfileKeys.isPropertyValid(proxy, args[0]));
+                        }
+                        if ("signature".equals(name)) {
+                            return enforcing ? ProfileKeys.signatureFor(proxy, type) : createDummySignature();
+                        }
+                        return null;
+                    }
+                });
     }
 
     public static String getDiscoveryJson() {
@@ -343,19 +368,6 @@ public class Hooks {
         try {
             log.debug("Replacing Mojang public key in BungeeCord");
             replaceStaticField(encUtilClass, "MOJANG_KEY", getPublicKey());
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to replace yggdrasil public key!", e);
-        }
-    }
-
-    public static void replaceYggdrasilServicesKeyInfoSignature(Object target) {
-        try {
-            log.debug("Replacing Mojang public key in YggdrasilServicesKeyInfo");
-            PublicKey publicKey = getPublicKey();
-
-            Field pubKeyField = target.getClass().getDeclaredField("publicKey");
-            pubKeyField.setAccessible(true);
-            pubKeyField.set(target, publicKey);
         } catch (Exception e) {
             throw new RuntimeException("Failed to replace yggdrasil public key!", e);
         }

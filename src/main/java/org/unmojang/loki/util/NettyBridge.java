@@ -143,12 +143,33 @@ public final class NettyBridge {
         if (method == null) {
             throw new NoSuchMethodException(target.getClass().getName() + "." + name + "/" + args.length);
         }
+        if (!Modifier.isPublic(method.getDeclaringClass().getModifiers())) {
+            try {
+                method.setAccessible(true);
+            } catch (Throwable ignored) {
+                // Nothing else to try; the invoke below will say so
+            }
+        }
         return method.invoke(target, args);
     }
 
+    /**
+     * Finds the method to invoke, preferring one declared somewhere public.
+     * <p>
+     * A public declaration is worth preferring because it can simply be invoked. Netty 4.0 puts
+     * {@code read()} and its neighbours on a package private {@code ChannelOutboundInvoker},
+     * though, and refusing to look there loses the method altogether: the call then throws, the
+     * read never reaches the socket, and the connection silently stops being served. So look
+     * everywhere, and let {@link #call} open up whatever it finds.
+     */
     private static Method resolve(Class<?> type, String name, Object[] args) {
+        Method method = resolve(type, name, args, true);
+        return method != null ? method : resolve(type, name, args, false);
+    }
+
+    private static Method resolve(Class<?> type, String name, Object[] args, boolean publicTypesOnly) {
         List<Method> candidates = new ArrayList<Method>();
-        collect(type, name, args.length, candidates);
+        collect(type, name, args.length, candidates, publicTypesOnly);
         Method fallback = null;
         for (int i = 0; i < candidates.size(); i++) {
             Method candidate = candidates.get(i);
@@ -158,21 +179,16 @@ public final class NettyBridge {
         return fallback;
     }
 
-    /**
-     * Collects matching methods from every public type in the hierarchy.
-     * <p>
-     * Resolving against the concrete class is not enough. Netty's implementations are routinely
-     * package private, and a {@code Method} found on one of those cannot be invoked from here even
-     * though the method itself is public; the declaration on the public interface can.
-     */
-    private static void collect(Class<?> type, String name, int arity, List<Method> into) {
+    /** Collects matching methods from the hierarchy, optionally only where the type is public. */
+    private static void collect(Class<?> type, String name, int arity, List<Method> into,
+                                boolean publicTypesOnly) {
         for (Class<?> current = type; current != null; current = current.getSuperclass()) {
-            if (Modifier.isPublic(current.getModifiers())) {
+            if (!publicTypesOnly || Modifier.isPublic(current.getModifiers())) {
                 addDeclared(current, name, arity, into);
             }
             Class<?>[] interfaces = current.getInterfaces();
             for (int i = 0; i < interfaces.length; i++) {
-                collect(interfaces[i], name, arity, into);
+                collect(interfaces[i], name, arity, into, publicTypesOnly);
             }
         }
     }

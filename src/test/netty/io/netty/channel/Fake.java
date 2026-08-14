@@ -78,15 +78,35 @@ public final class Fake {
                 }
             }
         }
+
+        /** What Netty does the moment a channel goes active, before a single byte moves. */
+        public void read() {
+            List<ChannelHandler> snapshot = new ArrayList<ChannelHandler>(handlers);
+            for (int i = 0; i < snapshot.size(); i++) {
+                ChannelHandler handler = snapshot.get(i);
+                if (handler instanceof ChannelOutboundHandler) {
+                    ((ChannelOutboundHandler) handler).read(new Context(this, handler));
+                }
+            }
+        }
     }
 
-    public static final class Context implements ChannelHandlerContext {
+    /** Set when a read reached the end of the pipeline, which is where Netty would go to the socket. */
+    public static volatile boolean readReachedTheSocket;
+
+    // Package private, as Netty 4.0 has it: only the interfaces above are visible from outside,
+    // which is what makes the bridge have to look past them
+    static final class Context implements ChannelHandlerContext {
         private final ChannelPipeline pipeline;
         private final ChannelHandler handler;
 
         public Context(ChannelPipeline pipeline, ChannelHandler handler) {
             this.pipeline = pipeline;
             this.handler = handler;
+        }
+
+        public void read() {
+            readReachedTheSocket = true;
         }
 
         public ChannelPipeline pipeline() {

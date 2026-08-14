@@ -197,6 +197,13 @@ public class ProfileRedirectTest {
         framed.flush();
 
         Fake.Channel channel = ((Fake.Future) future).channel();
+
+        // Netty asks for a read as soon as the channel is active. A handler that cannot pass that
+        // on stops the socket being read at all, which looks like a server that never answers.
+        Fake.readReachedTheSocket = false;
+        channel.pipeline().read();
+        check("a read passes through the watcher", Fake.readReachedTheSocket, null);
+
         // A non-zero reader index, as a buffer that has already been through an encoder would have
         channel.pipeline().write(new ByteBuf(frame.toByteArray(), 3));
         check("the watcher left the pipeline after one packet", channel.pipeline().size() == 0,
@@ -259,7 +266,21 @@ public class ProfileRedirectTest {
                 .getDeclaredConstructor().newInstance();
     }
 
-    public static void main(String[] args) throws Exception {
+    /**
+     * The test servers run on non-daemon threads, so an exception escaping the run would leave the
+     * JVM alive with nothing to do. A test that hangs tells you less than one that fails.
+     */
+    public static void main(String[] args) {
+        try {
+            run(args);
+        } catch (Throwable t) {
+            t.printStackTrace(System.out);
+            System.out.println("ProfileRedirectTest: CRASHED");
+            System.exit(1);
+        }
+    }
+
+    private static void run(String[] args) throws Exception {
         Api primary = new Api("primary", "/ali", false);
         Api declared = new Api("declared", "/authlib-injector", true);
 

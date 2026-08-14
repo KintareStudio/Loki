@@ -174,7 +174,18 @@ public class ProfileSignatureTest {
         return ((Boolean) isSignatureValid.invoke(instance, (Object) null)).booleanValue();
     }
 
-    public static void main(String[] args) throws Exception {
+    /** See ProfileRedirectTest: the key server runs on a non-daemon thread, so never hang on it. */
+    public static void main(String[] args) {
+        try {
+            run(args);
+        } catch (Throwable t) {
+            t.printStackTrace(System.out);
+            System.out.println("ProfileSignatureTest: CRASHED");
+            System.exit(1);
+        }
+    }
+
+    private static void run(String[] args) throws Exception {
         String mode = args[0];
         String stubDir = args[1];
 

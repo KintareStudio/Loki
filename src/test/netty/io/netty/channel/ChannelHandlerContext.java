@@ -1,7 +1,12 @@
 package io.netty.channel;
 
-/** Stand-in for Netty's ChannelHandlerContext. See {@link ChannelHandler}. */
-public interface ChannelHandlerContext {
+/**
+ * Stand-in for Netty's ChannelHandlerContext. See {@link ChannelHandler}.
+ * <p>
+ * Extends a package private interface on purpose, because Netty 4.0 does: see
+ * {@link ChannelOutboundInvoker} for why that matters.
+ */
+public interface ChannelHandlerContext extends ChannelOutboundInvoker {
     ChannelPipeline pipeline();
 
     ChannelHandler handler();

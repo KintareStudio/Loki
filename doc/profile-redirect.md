@@ -46,9 +46,17 @@ so your CDN does not have to be reachable under the client's own API server doma
 
 ## Client side
 
-Nothing to configure. Loki reads the declaration by performing its own Server List Ping the moment
-the game dials a server, before a single handshake byte is written, and caches the answer per
-address for the session.
+Nothing to configure. Loki performs its own Server List Ping when the game joins a server, and
+caches the answer per address for the session.
+
+A connection on its own does not mean the player is arriving: opening the multiplayer screen dials
+every server on the list. Loki reads the handshake the game is about to write and acts only on the
+one asking to move to the login state, so the servers on your list are neither pinged a second time
+nor able to set the profile API for a session you never joined.
+
+How the player got there does not matter. The server list, the direct connect screen, a `--server`
+argument and a 1.20.5+ transfer all end up at the same connection announcing itself in that same
+field, and all are honoured.
 
 Loki does the ping itself rather than reading the game's. Vanilla clients are obfuscated and the
 classes that model a status response are renamed every version, whereas the status handshake has

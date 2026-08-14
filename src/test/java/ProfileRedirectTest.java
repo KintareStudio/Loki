@@ -1,10 +1,13 @@
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import io.netty.buffer.ByteBuf;
+import io.netty.channel.Fake;
 import org.unmojang.loki.RequestInterceptor;
 import org.unmojang.loki.hooks.Hooks;
 import org.unmojang.loki.hooks.ProfileRedirect;
 import org.unmojang.loki.transformers.NettyConnectTransformer;
+import org.unmojang.loki.util.Protocol;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -164,9 +167,49 @@ public class ProfileRedirectTest {
                 + (declaration == null ? "" : ",\"loki\":{\"profileApi\":\"" + declaration + "\"}") + "}";
     }
 
-    private static Object connectVia(String host, int port) throws Exception {
-        return bootstrap.getClass().getMethod("connect", SocketAddress.class)
+    /**
+     * Dials a server the way the game does, and writes the handshake that says what for.
+     * <p>
+     * Both a server list ping and a player arriving open a connection through the same
+     * {@code connect}, so the handshake's next state is the only thing that tells them apart.
+     *
+     * @return the connect's return value, so a caller can check the hook left it alone
+     */
+    private static Object handshake(String host, int port, int nextState) throws Exception {
+        Object future = bootstrap.getClass().getMethod("connect", SocketAddress.class)
                 .invoke(bootstrap, InetSocketAddress.createUnresolved(host, port));
+
+        ByteArrayOutputStream payload = new ByteArrayOutputStream();
+        DataOutputStream packet = new DataOutputStream(payload);
+        McServer.writeVarInt(packet, 0x00); // Handshake
+        McServer.writeVarInt(packet, -1);   // protocol version
+        byte[] address = host.getBytes("UTF-8");
+        McServer.writeVarInt(packet, address.length);
+        packet.write(address);
+        packet.writeShort(port);
+        McServer.writeVarInt(packet, nextState);
+        packet.flush();
+
+        ByteArrayOutputStream frame = new ByteArrayOutputStream();
+        DataOutputStream framed = new DataOutputStream(frame);
+        McServer.writeVarInt(framed, payload.size());
+        framed.write(payload.toByteArray());
+        framed.flush();
+
+        Fake.Channel channel = ((Fake.Future) future).channel();
+        // A non-zero reader index, as a buffer that has already been through an encoder would have
+        channel.pipeline().write(new ByteBuf(frame.toByteArray(), 3));
+        check("the watcher left the pipeline after one packet", channel.pipeline().size() == 0,
+                String.valueOf(channel.pipeline().size()));
+        return future;
+    }
+
+    private static Object join(String host, int port) throws Exception {
+        return handshake(host, port, Protocol.STATE_LOGIN);
+    }
+
+    private static void ping(String host, int port) throws Exception {
+        handshake(host, port, Protocol.STATE_STATUS);
     }
 
     private static String fetch(String url) throws Exception {
@@ -246,8 +289,17 @@ public class ProfileRedirectTest {
                 fetch(profileUrl).contains("primary-textures"), null);
 
         System.out.println();
+        System.out.println("== pinging a server that declares a profile API ==");
+        ping("127.0.0.1", declaring.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        check("a ping does not publish an override", ProfileRedirect.sessionBase() == null,
+                ProfileRedirect.sessionBase());
+        check("a ping is not answered by the declared API server",
+                fetch(profileUrl).contains("primary-textures"), null);
+
+        System.out.println();
         System.out.println("== on a server that declares a profile API ==");
-        Object future = connectVia("127.0.0.1", declaring.port());
+        Object future = join("127.0.0.1", declaring.port());
         check("the hook left the connect's return value alone",
                 String.valueOf(future).startsWith("future:"), String.valueOf(future));
         ProfileRedirect.awaitDiscovery(8000L);
@@ -288,16 +340,23 @@ public class ProfileRedirectTest {
 
         System.out.println();
         System.out.println("== moving to a server that declares nothing ==");
-        connectVia("127.0.0.1", silent.port());
+        join("127.0.0.1", silent.port());
         ProfileRedirect.awaitDiscovery(8000L);
         check("override cleared", ProfileRedirect.sessionBase() == null, null);
         check("profile read back on the configured API server",
                 fetch(profileUrl).contains("primary-textures"), null);
 
         System.out.println();
+        System.out.println("== transferred onto a server that declares one ==");
+        handshake("127.0.0.1", declaring.port(), Protocol.STATE_TRANSFER);
+        ProfileRedirect.awaitDiscovery(8000L);
+        check("a transfer counts as arriving", ProfileRedirect.sessionBase() != null
+                && ProfileRedirect.sessionBase().startsWith(declared.base()), ProfileRedirect.sessionBase());
+
+        System.out.println();
         System.out.println("== a server declaring a cleartext public API ==");
         System.setProperty("minecraft.api.session.host", "https://real.example.com/sessionserver");
-        connectVia("127.0.0.1", downgrading.port());
+        join("127.0.0.1", downgrading.port());
         ProfileRedirect.awaitDiscovery(8000L);
         check("cleartext downgrade refused", ProfileRedirect.sessionBase() == null, null);
 

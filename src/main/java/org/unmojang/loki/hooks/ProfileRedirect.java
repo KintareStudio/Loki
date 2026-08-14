@@ -90,29 +90,37 @@ public final class ProfileRedirect {
 
     /**
      * Called from {@code io.netty.bootstrap.Bootstrap#connect}, which every 1.7+ client funnels
-     * both pings and joins through, on every transport. This runs before the game writes a single
-     * handshake byte.
+     * both pings and joins through, on every transport.
+     * <p>
+     * A connect on its own is not an arrival: the multiplayer screen opens one to every server on
+     * the list. {@link HandshakeWatcher} reads the handshake this connection is about to write and
+     * calls {@link #noteJoin} only for the one that asks to move to the login state.
      *
-     * @param socketAddress the connect target, typed as Object so the injected call site does not
-     *                      depend on where Netty happens to be relocated to
+     * @param future        the {@code ChannelFuture} the connect returned
+     * @param socketAddress the connect target. Both are typed as Object so the injected call site
+     *                      does not depend on where Netty happens to be relocated to
      */
-    public static void noteConnect(Object socketAddress) {
+    public static void noteConnect(Object future, Object socketAddress) {
         if (disabled() || !(socketAddress instanceof InetSocketAddress)) return;
         try {
             InetSocketAddress address = (InetSocketAddress) socketAddress;
             String host = hostOf(address);
             if (host == null || host.length() == 0) return;
-
-            final String peer = host + ":" + address.getPort();
-            if (peer.equals(System.getProperty(PROP_PEER))) return; // reconnect to the same server
-
-            System.setProperty(PROP_PEER, peer);
-            clearActiveOverride();
-            log.debug("Game connection to " + peer + ", checking for a profile API declaration");
-            discover(peer, host, address.getPort());
+            HandshakeWatcher.watch(future, host, address.getPort());
         } catch (Throwable t) {
             log.debug("Failed to note connection for profile redirect: " + t);
         }
+    }
+
+    /** Called once the handshake has shown that this connection is the player arriving. */
+    static void noteJoin(String host, int port) {
+        String peer = host + ":" + port;
+        if (peer.equals(System.getProperty(PROP_PEER))) return; // reconnect to the same server
+
+        System.setProperty(PROP_PEER, peer);
+        clearActiveOverride();
+        log.debug("Joining " + peer + ", checking for a profile API declaration");
+        discover(peer, host, port);
     }
 
     private static String hostOf(InetSocketAddress address) {

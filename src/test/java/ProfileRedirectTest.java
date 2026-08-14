@@ -4,9 +4,11 @@ import com.sun.net.httpserver.HttpServer;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Fake;
 import org.unmojang.loki.RequestInterceptor;
+import org.unmojang.loki.Ygglib;
 import org.unmojang.loki.hooks.Hooks;
 import org.unmojang.loki.hooks.ProfileRedirect;
 import org.unmojang.loki.transformers.NettyConnectTransformer;
+import org.unmojang.loki.util.Json;
 import org.unmojang.loki.util.Protocol;
 
 import java.io.ByteArrayOutputStream;
@@ -161,6 +163,14 @@ public class ProfileRedirectTest {
         }
     }
 
+    private static String base64(String value) throws Exception {
+        return java.util.Base64.getEncoder().encodeToString(value.getBytes("UTF-8"));
+    }
+
+    private static String profileWith(String properties) {
+        return "{\"id\":\"abc\",\"name\":\"TestPlayer\",\"properties\":[" + properties + "]}";
+    }
+
     private static String status(String declaration) {
         return "{\"version\":{\"name\":\"1.21.1\",\"protocol\":767},"
                 + "\"players\":{\"max\":20,\"online\":1},\"description\":\"test\""
@@ -308,6 +318,25 @@ public class ProfileRedirectTest {
         System.out.println("== before connecting anywhere ==");
         check("profile read served by the configured API server",
                 fetch(profileUrl).contains("primary-textures"), null);
+
+        System.out.println();
+        System.out.println("== finding the textures property in a profile ==");
+        check("found when it is the only one",
+                "mine".equals(Ygglib.texturesOf(new Json.JSONObject(profileWith(
+                        "{\"name\":\"textures\",\"value\":\"" + base64("mine") + "\"}")), "abc")), null);
+        // A profile from a server-declared API server need not be shaped like Mojang's
+        check("found when something else comes first",
+                "mine".equals(Ygglib.texturesOf(new Json.JSONObject(profileWith(
+                        "{\"name\":\"other\",\"value\":\"" + base64("theirs") + "\"},"
+                                + "{\"name\":\"textures\",\"value\":\"" + base64("mine") + "\"}")), "abc")), null);
+        boolean refused = false;
+        try {
+            Ygglib.texturesOf(new Json.JSONObject(profileWith(
+                    "{\"name\":\"other\",\"value\":\"" + base64("theirs") + "\"}")), "abc");
+        } catch (Exception e) {
+            refused = true;
+        }
+        check("refused when there is none, rather than decoding whatever was there", refused, null);
 
         System.out.println();
         System.out.println("== pinging a server that declares a profile API ==");

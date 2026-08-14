@@ -89,6 +89,27 @@ public class Ygglib {
         return uuid;
     }
 
+    /**
+     * Picks the textures property out of a profile by name.
+     * <p>
+     * Not by position. A Mojang profile carries exactly one property and it is this one, but the
+     * profile need not come from Mojang: a game server can name the API server that answers this
+     * lookup, and that answer does not go through the interceptor, so nothing else trims it down to
+     * the textures. Taking whatever came first would decode a Base64 string that is not one.
+     */
+    public static String texturesOf(Json.JSONObject profile, String uuid) throws Exception {
+        Json.JSONArray properties = profile.optJSONArray("properties");
+        if (properties != null) {
+            for (int i = 0; i < properties.length(); i++) {
+                Json.JSONObject property = properties.getJSONObject(i);
+                if ("textures".equals(property.optString("name", ""))) {
+                    return new String(Base64.decode(property.getString("value")), "UTF-8");
+                }
+            }
+        }
+        throw new IllegalStateException("Profile for " + uuid + " carries no textures property");
+    }
+
     @SuppressWarnings("BusyWait")
     public static String getTexturesProperty(String uuid, boolean returnProfileJson) throws Exception {
         try {
@@ -112,9 +133,7 @@ public class Ygglib {
 
                 String profileJson = HttpUtil.readStream(conn.getInputStream());
                 if (returnProfileJson) return profileJson;
-                Json.JSONObject profileObj = new Json.JSONObject(profileJson);
-                String texturesBase64 = profileObj.getJSONArray("properties").getJSONObject(0).getString("value");
-                return new String(Base64.decode(texturesBase64), "UTF-8");
+                return texturesOf(new Json.JSONObject(profileJson), uuid);
             }
         } catch (Exception e) {
             Loki.log.error("Failed to get textures property for " + uuid);

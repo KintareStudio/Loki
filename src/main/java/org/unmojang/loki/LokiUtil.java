@@ -23,7 +23,6 @@ import java.util.jar.*;
 @SuppressWarnings("HttpUrlsUsage")
 public class LokiUtil {
     public static String SERVER_NAME = "";
-    public static List<String> SERVER_TEXTURE_DOMAINS = new ArrayList<String>();
     public static boolean FOUND_ALI = false;
     public static final Map<String, String> MANIFEST_ATTRS = new ConcurrentHashMap<String, String>();
     public static final int JAVA_MAJOR = getJavaVersion();
@@ -290,18 +289,19 @@ public class LokiUtil {
                 }
             }
 
+            // The allowlist lives in a system property rather than a field, because
+            // Hooks.isAllowedTextureDomain reads it and the hooks package has to stay loadable
+            // from the bootstrap classloader, where nothing else of Loki's is visible.
             Json.JSONArray skinDomainsArr = json.optJSONArray("skinDomains");
-            if (skinDomainsArr != null && !skinDomainsArr.isEmpty() && SERVER_TEXTURE_DOMAINS.isEmpty()) {
+            if (skinDomainsArr != null && !skinDomainsArr.isEmpty()
+                    && System.getProperty(ProfileRedirect.PROP_TEXTURE_DOMAINS, "").length() == 0) {
                 StringBuilder domains = new StringBuilder();
                 for (int i = 0; i < skinDomainsArr.length(); i++) {
-                    SERVER_TEXTURE_DOMAINS.add(skinDomainsArr.getString(i));
                     if (i > 0) domains.append(",");
                     domains.append(skinDomainsArr.getString(i));
                 }
-                // Hooks.isAllowedTextureDomain reads this; it cannot see SERVER_TEXTURE_DOMAINS,
-                // since the hooks package has to stay loadable from the bootstrap classloader.
                 System.setProperty(ProfileRedirect.PROP_TEXTURE_DOMAINS, domains.toString());
-                Loki.log.debug("Added texture domains: " + SERVER_TEXTURE_DOMAINS);
+                Loki.log.debug("Added texture domains: " + domains);
             }
         } catch (Exception e) {
             Loki.log.error("Failed to get server metadata", e);

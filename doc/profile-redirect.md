@@ -170,6 +170,34 @@ Two further limits apply to what a server can do with a redirect it was granted:
 None of the redirected endpoints take an access token, so a hostile declaration gains a server
 nothing it did not already have: it learns that a client on it asked about a player on it.
 
+## Checking it works
+
+Two scripts, because the two sides fail in different ways and a test that covers both at once tells
+you neither. Both stand up real Minecraft servers, so both accept the EULA on your behalf and say so
+on every run.
+
+```
+scripts\real-server-test.ps1
+```
+The server side: a real server of each era, with and without Loki, checked for whether its status
+response carries the declaration and still parses as what it was.
+
+```
+scripts\cross-system-test.ps1 -Stub
+scripts\cross-system-test.ps1 -YggdrasilA https://a.example/authlib-injector `
+                              -YggdrasilB https://b.example/authlib-injector `
+                              -TokenA $a -TokenB $b -ProbeUuid <a player on A>
+```
+The client side, which is where this feature is either doing something or rendering everyone as
+Steve. It joins one server, running on API server A, with three separate clients — one on Mojang,
+one on A, one on B — and checks that each of them resolves a player who exists only on A, verifies
+that player's signature against A's keys, keeps its own credentials on its own API server, and hands
+all of it back on leaving. `-Stub` runs the whole thing against two stand-in API servers, one of
+which publishes several signing keys and signs with the last of them.
+
+Tokens are optional and go through the environment rather than the command line. Without one, the
+check that a client's own token still reaches its own API server is skipped and the rest runs.
+
 ## Turning it off
 
 ```

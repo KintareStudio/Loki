@@ -144,6 +144,11 @@
             <classpath refid="test.classpath"/>
         </java>
 
+        <java classname="LegacyStreamsTest" fork="true" failonerror="true"
+              jvm="${java_home}/bin/java">
+            <classpath refid="test.classpath"/>
+        </java>
+
         <java classname="ProfileRedirectTest" fork="true" failonerror="true"
               jvm="${java_home}/bin/java">
             <classpath refid="test.classpath"/>

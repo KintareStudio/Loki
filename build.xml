@@ -167,6 +167,16 @@
             <arg value="offline"/>
             <arg file="${build.dir}/test-stubs"/>
         </java>
+
+        <!-- A client that started with checking off, turned on by the server it joined. Its own
+             process because the patched classes are patched once, and this one needs them patched
+             the way a client without the flag gets them. -->
+        <java classname="ProfileSignatureTest" fork="true" failonerror="true"
+              jvm="${java_home}/bin/java">
+            <classpath refid="test.classpath"/>
+            <arg value="declared"/>
+            <arg file="${build.dir}/test-stubs"/>
+        </java>
     </target>
 
     <target name="shadow" depends="compile">

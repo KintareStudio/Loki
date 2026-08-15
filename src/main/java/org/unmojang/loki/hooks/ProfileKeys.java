@@ -175,6 +175,7 @@ public final class ProfileKeys {
      * @param signature the Base64 signature, or null on an unsigned property
      */
     public static boolean isSignatureValid(Object owner, String value, String signature) {
+        if (!enforcing()) return true;
         if (value == null || signature == null || signature.length() == 0) return false;
 
         byte[] signatureBytes;
@@ -278,6 +279,7 @@ public final class ProfileKeys {
      * @param uuid            the player's UUID for the 1.19.1+ format, or null for 1.19.0's
      */
     public static boolean isCertificateValid(Object playerPublicKey, Object uuid) {
+        if (!enforcing()) return true;
         try {
             long expiry = ((Long) invoke(playerPublicKey, "getExpiry")).longValue();
             byte[] declaredKey = (byte[]) invoke(playerPublicKey, "getKey");
@@ -329,7 +331,28 @@ public final class ProfileKeys {
      * @param keyType {@code PROFILE_PROPERTY} or {@code PROFILE_KEY}, as the enum names them
      */
     public static Signature signatureFor(Object owner, String keyType) {
+        // Not verifying means handing back something that says yes, since the caller is going to
+        // ask this object and nothing else whether a signature holds
+        if (!enforcing()) return Hooks.createDummySignature();
         return new MultiKeySignature(trusted(owner, keyType));
+    }
+
+    /**
+     * Whether signatures are being checked at all, right now.
+     * <p>
+     * Asked per call rather than decided when the class was patched, because it can change during a
+     * session: a server that enforces secure profiles says so in its ping, and Loki honours that for
+     * as long as the player is on it. Baking the answer into the bytecode, as this used to, meant a
+     * client that started without the flag could never begin checking, whatever a server asked for.
+     * <p>
+     * A server can only make a client stricter this way, never laxer. A client that has the flag on
+     * keeps checking everywhere, and one that would rather decide for itself sets
+     * {@code Loki.ignore_declared_secure_profile}.
+     */
+    public static boolean enforcing() {
+        if (Boolean.getBoolean("Loki.enforce_secure_profile")) return true;
+        if (Boolean.getBoolean("Loki.ignore_declared_secure_profile")) return false;
+        return Boolean.getBoolean(ProfileRedirect.PROP_ENFORCE);
     }
 
     private static boolean verify(PublicKey key, String value, byte[] signature) {

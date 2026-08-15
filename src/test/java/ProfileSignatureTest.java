@@ -193,8 +193,9 @@ public class ProfileSignatureTest {
         String mode = args[0];
         String stubDir = args[1];
 
-        // Must land before the transformer loads Loki, which reads this once
-        System.setProperty("Loki.enforce_secure_profile", "true");
+        // Must land before the transformer loads Loki, which reads this once. Deliberately not set
+        // in "declared" mode: that mode is about a client that started without it.
+        if (!"declared".equals(mode)) System.setProperty("Loki.enforce_secure_profile", "true");
 
         KeyPair active = rsa();
         KeyPair grace = rsa();
@@ -267,6 +268,26 @@ public class ProfileSignatureTest {
 
             server.stop(0);
             check("the keys outlive the API server going away",
+                    valid(property, VALUE, sign(active, VALUE)), null);
+        } else if ("declared".equals(mode)) {
+            // The client started with checking off, so the patched method has to be one that asks
+            // rather than one that was told. If the transformer baked in `return true`, as it used
+            // to, nothing below can turn checking on and the first negative check fails.
+            // `active` is published by the endpoint, which is unreachable in this mode, so nothing
+            // here trusts it. `stranger` is in the metadata and `mojang` is bundled: both are.
+            check("nothing is checked to begin with, whoever signed it",
+                    valid(property, VALUE, sign(active, VALUE)), null);
+
+            System.setProperty("Loki.profile_redirect.enforce", "true");
+            check("a server that enforces makes the patched method check",
+                    !valid(property, VALUE, sign(active, VALUE)), null);
+            check("and a trusted key still passes while it does",
+                    valid(property, VALUE, sign(mojang, VALUE)), null);
+            check("the certificate verifier follows the same switch",
+                    !verifiedByCertificateSignature(classes, VALUE, sign(active, VALUE)), null);
+
+            System.clearProperty("Loki.profile_redirect.enforce");
+            check("and leaving the server puts the method back to accepting",
                     valid(property, VALUE, sign(active, VALUE)), null);
         } else if ("metadata".equals(mode)) {
             check("the metadata is fallen back on when the endpoint has nothing",

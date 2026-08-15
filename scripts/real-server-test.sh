@@ -114,7 +114,8 @@ else
 fi
 
 say "starting with Loki"
-if start_and_ping loki "-javaagent:$(topath "$loki_agent_jar")=$api"; then
+if start_and_ping loki "-javaagent:$(topath "$loki_agent_jar")=$api" \
+        -DLoki.enforce_secure_profile=true; then
     case "$ping_json" in
         *"\"session\":\"$api/sessionserver\""*) ok "Loki declared its endpoints, session included" ;;
         *'"loki"'*) fail "declared something unexpected: $ping_json" ;;
@@ -123,6 +124,10 @@ if start_and_ping loki "-javaagent:$(topath "$loki_agent_jar")=$api"; then
     case "$ping_json" in
         *'"version"'*) ok "the rest of the status survived the rewrite" ;;
         *) fail "the status response lost its own fields: $ping_json" ;;
+    esac
+    case "$ping_json" in
+        *'"enforceSecureProfile":true'*) ok "and passed on that it checks signatures here" ;;
+        *) fail "did not declare secure profile enforcement, which it was started with" ;;
     esac
 else
     fail "Loki run did not come up"

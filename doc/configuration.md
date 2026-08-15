@@ -69,6 +69,13 @@ Loki supports JVM arguments to enable or disable some behaviour.
   ```
   -DLoki.enforce_secure_profile=true
   ```
+  On a server this flag does one more thing: it tells the Loki clients that join that signatures are
+  checked here, so they check too for as long as they are on it. [^3]
+
+- Ignore a server asking for signatures to be verified on it, and check only where you said so [^3]
+  ```
+  -DLoki.ignore_declared_secure_profile=true
+  ```
 
 - Force the applet launcher to re-download the game, for pre-Beta 1.3 applet launchers that lack a "Force Update" option
   ```

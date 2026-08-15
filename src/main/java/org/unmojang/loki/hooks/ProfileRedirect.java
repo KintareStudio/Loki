@@ -54,6 +54,7 @@ public final class ProfileRedirect {
     private static final String FIELD_ACCOUNT = "account";
     private static final String FIELD_SERVICES = "services";
     private static final String FIELD_SKIN_DOMAINS = "skinDomains";
+    private static final String FIELD_ENFORCE = "enforceSecureProfile";
 
     /** Cross-classloader bus. Loki's hooks are duplicated per classloader, system properties are not. */
     private static final String PROP_PEER = "Loki.profile_redirect.peer";
@@ -63,6 +64,8 @@ public final class ProfileRedirect {
     private static final String PROP_SERVICES = "Loki.profile_redirect.services";
     /** Comma separated. Empty or absent means "allow any texture domain", matching Loki's default. */
     public static final String PROP_TEXTURE_DOMAINS = "Loki.texture_domains";
+    /** Set while on a server that said it enforces secure profiles. Read by {@link ProfileKeys}. */
+    public static final String PROP_ENFORCE = "Loki.profile_redirect.enforce";
 
     private static final int PING_TIMEOUT_MS = 3000;
     private static final int HTTP_TIMEOUT_MS = 5000;
@@ -88,10 +91,11 @@ public final class ProfileRedirect {
         volatile String account;
         volatile String services;
         volatile List<String> skinDomains = new ArrayList<String>();
+        volatile boolean enforce;
 
         /** Any one of them is a declaration; a server need not name endpoints it does not move. */
         boolean found() {
-            return session != null || account != null || services != null;
+            return session != null || account != null || services != null || enforce;
         }
     }
 
@@ -221,6 +225,9 @@ public final class ProfileRedirect {
         if (account != null) discovery.account = account;
         if (services != null) discovery.services = services;
 
+        // A server may enforce without moving anything, so this stands on its own as a declaration
+        discovery.enforce = declaration.optBoolean(FIELD_ENFORCE, false);
+
         Json.JSONArray domains = declaration.optJSONArray(FIELD_SKIN_DOMAINS);
         if (domains != null) {
             List<String> declared = new ArrayList<String>();
@@ -331,6 +338,9 @@ public final class ProfileRedirect {
         setOrClear(PROP_SESSION, discovery.session);
         setOrClear(PROP_ACCOUNT, discovery.account);
         setOrClear(PROP_SERVICES, discovery.services);
+        // Stricter only, and only here: a server can ask for signatures to be checked on it, and
+        // leaving puts the client back on whatever it decided for itself
+        setOrClear(PROP_ENFORCE, discovery.enforce ? "true" : null);
         System.setProperty(PROP_ORIGIN, peer);
         applyTextureDomains(discovery.skinDomains);
         // Its keys as well as its profiles. What it serves is signed by them, so checking against
@@ -351,6 +361,7 @@ public final class ProfileRedirect {
         System.clearProperty(PROP_SESSION);
         System.clearProperty(PROP_ACCOUNT);
         System.clearProperty(PROP_SERVICES);
+        System.clearProperty(PROP_ENFORCE);
         System.clearProperty(PROP_ORIGIN);
     }
 

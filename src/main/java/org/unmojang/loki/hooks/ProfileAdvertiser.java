@@ -53,12 +53,19 @@ public final class ProfileAdvertiser {
         appendField(fields, "session", System.getProperty("minecraft.api.session.host"));
         appendField(fields, "account", System.getProperty("minecraft.api.account.host"));
         appendField(fields, "services", System.getProperty("minecraft.api.services.host"));
-        if (fields.length() == 0) return null;
+
+        // Stands alone: a server on the same API server as everyone else still has this to say,
+        // and it is the only thing it needs to say to be worth declaring
+        if (enforcesSecureProfile()) {
+            separate(fields);
+            fields.append("\"enforceSecureProfile\":true");
+        }
 
         // Whatever the client would otherwise have to read the metadata for, since it has no root
         String domains = System.getProperty(ProfileRedirect.PROP_TEXTURE_DOMAINS, "");
         if (domains.length() != 0 && domains.indexOf('"') == -1) {
-            fields.append(",\"skinDomains\":[");
+            separate(fields);
+            fields.append("\"skinDomains\":[");
             String[] each = domains.split(",");
             for (int i = 0; i < each.length; i++) {
                 if (i > 0) fields.append(",");
@@ -66,7 +73,25 @@ public final class ProfileAdvertiser {
             }
             fields.append("]");
         }
-        return fields.toString();
+
+        return fields.length() == 0 ? null : fields.toString();
+    }
+
+    /**
+     * Whether to tell clients that signatures are checked here: this server's own Loki argument.
+     * <p>
+     * Not {@code enforce-secure-profile} out of {@code server.properties}. That setting arrived in
+     * 1.19 and does not exist before it, so on the versions where the client most needs telling —
+     * the ones with no secure chat of their own — the file has nothing to say. The operator's
+     * statement that signatures matter on this server is the flag they started Loki with, and it
+     * means the same thing on every version.
+     */
+    private static boolean enforcesSecureProfile() {
+        return Boolean.getBoolean("Loki.enforce_secure_profile");
+    }
+
+    private static void separate(StringBuilder fields) {
+        if (fields.length() != 0) fields.append(",");
     }
 
     private static void appendField(StringBuilder fields, String name, String url) {

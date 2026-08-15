@@ -87,8 +87,25 @@ public class ProfileScopeTest {
                         + "\"services\":\"https://elsewhere.example/svc\","
                         + "\"skinDomains\":[\"cdn.example\",\"other.example\"]");
         System.clearProperty(ProfileRedirect.PROP_TEXTURE_DOMAINS);
+
+        // Secure profile enforcement is about this server, not about where its profiles live, so it
+        // is said on its own and is worth saying even by a server that moves nothing
+        System.setProperty("Loki.enforce_secure_profile", "true");
+        expect("that it enforces secure profiles, when it does",
+                org.unmojang.loki.hooks.ProfileAdvertiser.declaration(),
+                "\"session\":\"https://api.example/sessions\","
+                        + "\"services\":\"https://elsewhere.example/svc\","
+                        + "\"enforceSecureProfile\":true");
+
         System.clearProperty("minecraft.api.session.host");
         System.clearProperty("minecraft.api.services.host");
+        expect("and says so even with no API server of its own to name",
+                org.unmojang.loki.hooks.ProfileAdvertiser.declaration(),
+                "\"enforceSecureProfile\":true");
+
+        System.clearProperty("Loki.enforce_secure_profile");
+        expect("and says nothing at all when it does not",
+                org.unmojang.loki.hooks.ProfileAdvertiser.declaration(), null);
 
         System.out.println();
         System.out.println("== metadata a launcher prefetched ==");

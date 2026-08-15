@@ -43,22 +43,23 @@ public class SignatureValidTransformer extends LokiTransformer {
                 mn.tryCatchBlocks.clear();
                 if (mn.localVariables != null) mn.localVariables.clear();
 
-                if (Loki.enforce_secure_profile) {
-                    // The PublicKey argument is deliberately ignored: it is authlib's single
-                    // hardcoded key, and the point of this is to trust a set instead.
-                    mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
-                    mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
-                    mn.instructions.add(new FieldInsnNode(Opcodes.GETFIELD, className, "value", "Ljava/lang/String;"));
-                    mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
-                    mn.instructions.add(new FieldInsnNode(Opcodes.GETFIELD, className, "signature", "Ljava/lang/String;"));
-                    mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
-                            "org/unmojang/loki/hooks/ProfileKeys",
-                            "isSignatureValid",
-                            "(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;)Z",
-                            false));
-                } else {
-                    mn.instructions.add(new InsnNode(Opcodes.ICONST_1));
-                }
+                // Always the call, never a constant true: whether signatures are checked can change
+                // during a session, since a server can ask for it in its ping, and a class patched
+                // to return true was patched when the game started and cannot be asked again.
+                // ProfileKeys answers that question per call.
+                //
+                // The PublicKey argument is deliberately ignored: it is authlib's single hardcoded
+                // key, and the point of this is to trust a set instead.
+                mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                mn.instructions.add(new FieldInsnNode(Opcodes.GETFIELD, className, "value", "Ljava/lang/String;"));
+                mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                mn.instructions.add(new FieldInsnNode(Opcodes.GETFIELD, className, "signature", "Ljava/lang/String;"));
+                mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
+                        "org/unmojang/loki/hooks/ProfileKeys",
+                        "isSignatureValid",
+                        "(Ljava/lang/Object;Ljava/lang/String;Ljava/lang/String;)Z",
+                        false));
                 mn.instructions.add(new InsnNode(Opcodes.IRETURN));
 
                 Loki.log.debug("Patching " + LokiUtil.getFqmn(className, mn.name, mn.desc));

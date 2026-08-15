@@ -73,6 +73,17 @@ assumed to be `https://`.
 Clients that do not run Loki ignore the field, because every Minecraft client since 1.7 parses the
 status response with a parser that drops unknown keys. Adding this cannot break vanilla players.
 
+`enforceSecureProfile` says that this server checks signatures, and asks the clients on it to do the
+same. A server running Loki declares it when it was started with `-DLoki.enforce_secure_profile=true`
+— its own flag, not `enforce-secure-profile` from `server.properties`. That setting arrived in 1.19,
+so on the versions where a client most needs telling the file has nothing to say, while the flag
+means the same thing on every version. It stands on its own — a server with no API server of its own
+to name still has this to say — and a client that already checks is unaffected.
+
+```json
+"loki": { "enforceSecureProfile": true }
+```
+
 `skinDomains` names the hosts your textures are served from, and Loki adds them to the client's
 texture allowlist for as long as the player is connected, so your CDN does not have to be reachable
 under the client's own API server domains. If you run Loki, it declares the domains it was
@@ -159,7 +170,19 @@ the server you are playing on. The bound is time rather than kind:
   that connection ends — quitting, being kicked, or the connection simply dropping. Not at the next
   arrival: a player sitting in the menu is not on a server, and should not still be trusting one
 
-None of this applies without `enforce_secure_profile`, since nothing is verified at all then.
+None of this applies while nothing is being verified — but whether anything is being verified is no
+longer settled when the game starts. A server that declares `enforceSecureProfile` turns checking on
+for the client while it is on that server, and leaving turns it back to whatever the client chose:
+on if it was launched with `Loki.enforce_secure_profile`, off otherwise.
+
+The asymmetry is the point. A server can make a client stricter about the server's own players and
+nothing else, which is a thing it can already do by refusing to let them in. It cannot make a client
+laxer, and it cannot reach past the visit. A client that would rather not be asked at all sets
+`Loki.ignore_declared_secure_profile=true` and decides for itself everywhere.
+
+Worth knowing what "stricter" costs: on a server whose API server publishes no usable keys, checking
+turns every player into Steve where accepting would have shown them. That is the server operator's
+choice to make about their own server, and it is undone the moment the player leaves.
 
 Two further limits apply to what a server can do with a redirect it was granted:
 

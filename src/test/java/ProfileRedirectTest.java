@@ -356,6 +356,10 @@ public class ProfileRedirectTest {
         System.setProperty("minecraft.api.profiles.host", primary.base() + "/ali/api");
         System.setProperty("minecraft.api.services.host", primary.base() + "/ali/minecraftservices");
         System.setProperty("Loki.texture_domains", "cdn-primary.example");
+        // Whose keys are trusted is only a question worth asking where signatures are checked, so
+        // the checks below are run with checking on. The section at the end turns it off again, to
+        // exercise the other thing that can turn it on: the server saying it enforces.
+        System.setProperty("Loki.enforce_secure_profile", "true");
 
         McServer declaring = new McServer(status(declared.base() + "/authlib-injector"));
         McServer silent = new McServer(status(null));
@@ -558,6 +562,43 @@ public class ProfileRedirectTest {
         check("a late close from the server just left does not undo the new one",
                 ProfileRedirect.sessionBase() != null, ProfileRedirect.sessionBase());
         disconnect(arriving);
+
+        System.out.println();
+        System.out.println("== a client with checking off, on a server that enforces ==");
+        System.clearProperty("Loki.enforce_secure_profile");
+        String nonsense = "this is not a signature";
+        check("with checking off, a signature is not looked at at all",
+                org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, nonsense), null);
+
+        McServer enforcing = new McServer("{\"version\":{\"name\":\"1.21.1\",\"protocol\":767},"
+                + "\"players\":{\"max\":20,\"online\":1},\"description\":\"test\",\"loki\":{"
+                + "\"session\":\"" + declared.base() + "/authlib-injector/sessionserver\","
+                + "\"services\":\"" + declared.base() + "/authlib-injector/minecraftservices\","
+                + "\"enforceSecureProfile\":true}}");
+        enforcing.start();
+        join("127.0.0.1", enforcing.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        check("a server that enforces turns it on for the visit",
+                !org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, nonsense), null);
+        check("and what its own API server signed verifies, so it is usable while it is on",
+                org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, signedByDeclared),
+                null);
+
+        join("127.0.0.1", silent.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        check("leaving puts the client back on the setting it chose",
+                org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, nonsense), null);
+
+        // A server can only ever make a client stricter, and only a client can refuse that
+        System.setProperty("Loki.ignore_declared_secure_profile", "true");
+        join("127.0.0.1", enforcing.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        check("a client that would rather decide for itself is not made to check",
+                org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, nonsense), null);
+        System.clearProperty("Loki.ignore_declared_secure_profile");
+        System.setProperty("Loki.enforce_secure_profile", "true");
+        check("and a client that always checks keeps checking, whatever a server says",
+                !org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, nonsense), null);
 
         System.out.println();
         System.out.println("== a server declaring a cleartext public API ==");

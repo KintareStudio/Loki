@@ -35,22 +35,21 @@ public class ServicesKeyInfoTransformer extends LokiTransformer {
                 mn.tryCatchBlocks.clear();
                 if (mn.localVariables != null) mn.localVariables.clear();
 
+                // Against every key the API server publishes for profile properties, not against
+                // the one this object happens to hold. Called unconditionally, since whether
+                // signatures are checked is a question for the moment of the call: a server can ask
+                // for checking in its ping, and a class patched to return true was patched when the
+                // game started.
                 InsnList insns = new InsnList();
-                if (Loki.enforce_secure_profile) {
-                    // Against every key the API server publishes for profile properties, not
-                    // against the one this object happens to hold
-                    insns.add(new VarInsnNode(Opcodes.ALOAD, 0));
-                    insns.add(new VarInsnNode(Opcodes.ALOAD, 1));
-                    insns.add(new MethodInsnNode(
-                            Opcodes.INVOKESTATIC,
-                            "org/unmojang/loki/hooks/ProfileKeys",
-                            "isPropertyValid",
-                            "(Ljava/lang/Object;Ljava/lang/Object;)Z",
-                            false
-                    ));
-                } else {
-                    insns.add(new InsnNode(Opcodes.ICONST_1));
-                }
+                insns.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                insns.add(new VarInsnNode(Opcodes.ALOAD, 1));
+                insns.add(new MethodInsnNode(
+                        Opcodes.INVOKESTATIC,
+                        "org/unmojang/loki/hooks/ProfileKeys",
+                        "isPropertyValid",
+                        "(Ljava/lang/Object;Ljava/lang/Object;)Z",
+                        false
+                ));
                 insns.add(new InsnNode(Opcodes.IRETURN));
 
                 mn.instructions.add(insns);
@@ -62,27 +61,19 @@ public class ServicesKeyInfoTransformer extends LokiTransformer {
                 mn.tryCatchBlocks.clear();
                 if (mn.localVariables != null) mn.localVariables.clear();
 
+                // This is what verifies a player's certificate, so it answers for the certificate
+                // keys, and for all of them: one Signature, several keys behind it. It also answers
+                // for the case where nothing is being checked, by handing back the verifier that
+                // says yes — which is a decision for the moment it is asked, not for patch time.
                 InsnList insns = new InsnList();
-                if (Loki.enforce_secure_profile) {
-                    // This is what verifies a player's certificate, so it answers for the
-                    // certificate keys, and for all of them: one Signature, several keys behind it
-                    insns.add(new VarInsnNode(Opcodes.ALOAD, 0));
-                    insns.add(new MethodInsnNode(
-                            Opcodes.INVOKESTATIC,
-                            "org/unmojang/loki/hooks/ProfileKeys",
-                            "certificateSignature",
-                            "(Ljava/lang/Object;)Ljava/security/Signature;",
-                            false
-                    ));
-                } else {
-                    insns.add(new MethodInsnNode(
-                            Opcodes.INVOKESTATIC,
-                            "org/unmojang/loki/hooks/Hooks",
-                            "createDummySignature",
-                            "()Ljava/security/Signature;",
-                            false
-                    ));
-                }
+                insns.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                insns.add(new MethodInsnNode(
+                        Opcodes.INVOKESTATIC,
+                        "org/unmojang/loki/hooks/ProfileKeys",
+                        "certificateSignature",
+                        "(Ljava/lang/Object;)Ljava/security/Signature;",
+                        false
+                ));
                 insns.add(new InsnNode(Opcodes.ARETURN));
 
                 mn.instructions.add(insns);

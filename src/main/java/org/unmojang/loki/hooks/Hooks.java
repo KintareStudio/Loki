@@ -152,7 +152,7 @@ public class Hooks {
                             if (!"keys".equals(name)) return Collections.emptyList();
 
                             String type = args != null && args.length != 0 ? keyTypeName(args[0]) : "";
-                            if (!Boolean.getBoolean("Loki.enforce_secure_profile")) {
+                            if (!ProfileKeys.enforcing()) {
                                 return Collections.singletonList(keyInfo(cl, keyInfoClass, type));
                             }
                             // Fail closed on a type this version of Loki does not know about,
@@ -188,14 +188,15 @@ public class Hooks {
                         if ("equals".equals(name)) return proxy == args[0];
                         if ("toString".equals(name)) return "LokiServicesKeyInfo(" + type + ")";
 
-                        boolean enforcing = Boolean.getBoolean("Loki.enforce_secure_profile");
+                        // Both of these already answer for the not-checking case themselves, and
+                        // both decide it when asked rather than when this proxy was built, since a
+                        // server can turn checking on partway through a session
                         if ("validateProperty".equals(name)) {
-                            if (!enforcing) return Boolean.TRUE;
                             // A property is a property whichever list this info came from
                             return Boolean.valueOf(ProfileKeys.isPropertyValid(proxy, args[0]));
                         }
                         if ("signature".equals(name)) {
-                            return enforcing ? ProfileKeys.signatureFor(proxy, type) : createDummySignature();
+                            return ProfileKeys.signatureFor(proxy, type);
                         }
                         return null;
                     }

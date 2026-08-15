@@ -39,6 +39,13 @@ loki_fetch_version() {
     work=$2
     mkdir -p "$work"
 
+    # An archived server has no entry in Mojang's manifest to read, and every one of them predates
+    # the field that says which Java it needs. They all want 8.
+    if [ -n "$(loki_legacy_server_url "$version")" ]; then
+        loki_needs_java=8
+        return 0
+    fi
+
     manifest="$loki_root/build/real-server/version_manifest_v2.json"
     mkdir -p "$loki_root/build/real-server"
     [ -f "$manifest" ] || curl -sS --max-time 60 -o "$(topath "$manifest")" \
@@ -70,10 +77,34 @@ loki_jdk() {
     loki_java_bin="$loki_java_home/bin/java"
 }
 
+# Servers Mojang no longer publishes. Its manifest carries client jars for these versions and no
+# server, so the originals come from betacraft.uk, which archives them unmodified.
+#
+# The ids are the server's own, which are not the client's: the Alpha client a1.2.6 was served by
+# a0.2.8, and Classic clients by the c1.x line. That is why this is a table and not a rule.
+loki_legacy_server_url() {
+    case $1 in
+        b1.8.1) echo "https://files.betacraft.uk/server-archive/beta/b1.8.1.jar" ;;
+        b1.8)   echo "https://files.betacraft.uk/server-archive/beta/b1.8.jar" ;;
+        b1.7.3) echo "https://files.betacraft.uk/server-archive/beta/b1.7.3.jar" ;;
+        a0.2.8) echo "https://files.betacraft.uk/server-archive/alpha/a0.2.8.jar" ;;
+        c1.10)  echo "https://files.betacraft.uk/server-archive/classic/c1.10.jar" ;;
+        *)      echo "" ;;
+    esac
+}
+
 loki_fetch_server() {
     version=$1
     work=$2
     [ -f "$work/server.jar" ] && return 0
+
+    legacy=$(loki_legacy_server_url "$version")
+    if [ -n "$legacy" ]; then
+        mkdir -p "$work"
+        echo "  downloading $legacy"
+        curl -sS --max-time 300 -o "$(topath "$work/server.jar")" "$legacy"
+        return $?
+    fi
 
     server_url=$(tr ',' '\n' < "$work/version.json" | grep -A2 '"server"' \
         | grep -o 'https://[^"]*server.jar' | head -1)
@@ -92,6 +123,21 @@ loki_write_server_dir() {
     work=$1
     port=$2
     echo "eula=true" > "$work/eula.txt"
+
+    # A server of the Beta era reads a handful of keys and refuses the modern ones outright: it
+    # rejects view-distance=2 with "Too small view radius!" and never finishes starting. Give those
+    # only what they understood.
+    if [ -n "$(loki_legacy_server_url "$version")" ]; then
+        cat > "$work/server.properties" <<EOF
+server-port=$port
+online-mode=false
+max-players=4
+level-name=world
+motd=Loki test server
+EOF
+        return 0
+    fi
+
     cat > "$work/server.properties" <<EOF
 server-port=$port
 online-mode=false

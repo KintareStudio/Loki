@@ -59,8 +59,18 @@ loki_fetch_server "$version" "$work" || exit 1
 mkdir -p "$work/pinger"
 "$loki_java_home/bin/javac" -cp "$(topath "$loki_agent_jar")" -d "$(topath "$work/pinger")" \
     "$(topath "$loki_root/src/test/java/ServerPing.java")" \
+    "$(topath "$loki_root/src/test/java/LegacyPing.java")" \
     "$(topath "$loki_root/src/test/java/NettyRig.java")"
 classpath="$(topath "$loki_agent_jar")$cp_sep$(topath "$work/pinger")"
+
+legacy=$(loki_legacy_server_url "$version")
+if [ -n "$legacy" ]; then
+    pinger=LegacyPing
+    declared_marker="loki=$api"
+else
+    pinger=ServerPing
+    declared_marker="\"session\":\"$api/sessionserver\""
+fi
 
 # ----------------------------------------------------------------- run and ping
 ping_json=""
@@ -74,7 +84,9 @@ start_and_ping() {
     # broken response into a long silence.
     attempt=0
     while [ $attempt -lt 3 ]; do
-        ping_json=$("$loki_java_bin" -cp "$classpath" ServerPing 127.0.0.1 "$port" 5000 \
+        # A server from before 1.7 does not speak the modern status protocol at all: it answers a
+        # single 0xFE with one string. Different protocol, different pinger.
+        ping_json=$("$loki_java_bin" -cp "$classpath" $pinger 127.0.0.1 "$port" 5000 \
             2>>"$work/$label-ping.log" || true)
         [ -n "$ping_json" ] && break
         attempt=$((attempt + 1))
@@ -106,7 +118,7 @@ loki_write_server_dir "$work" "$port"
 say "starting without Loki, as a control"
 if start_and_ping control; then
     case "$ping_json" in
-        *'"loki"'*) fail "a plain server already declares a profile API" ;;
+        *'"loki"'*|*"loki="*) fail "a plain server already declares a profile API" ;;
         *) ok "a plain server declares nothing" ;;
     esac
 else
@@ -117,18 +129,27 @@ say "starting with Loki"
 if start_and_ping loki "-javaagent:$(topath "$loki_agent_jar")=$api" \
         -DLoki.enforce_secure_profile=true; then
     case "$ping_json" in
-        *"\"session\":\"$api/sessionserver\""*) ok "Loki declared its endpoints, session included" ;;
-        *'"loki"'*) fail "declared something unexpected: $ping_json" ;;
+        *"$declared_marker"*) ok "Loki declared its API server" ;;
+        *'"loki"'*|*"loki="*) fail "declared something unexpected: $ping_json" ;;
         *) fail "no declaration in the status response" ;;
     esac
-    case "$ping_json" in
-        *'"version"'*) ok "the rest of the status survived the rewrite" ;;
-        *) fail "the status response lost its own fields: $ping_json" ;;
-    esac
-    case "$ping_json" in
-        *'"enforceSecureProfile":true'*) ok "and passed on that it checks signatures here" ;;
-        *) fail "did not declare secure profile enforcement, which it was started with" ;;
-    esac
+    if [ -n "$legacy" ]; then
+        # No version field to lose here. What matters is that the server's own fields — the MOTD
+        # and the two counts, separated by section signs the pinger prints as $ — are still there
+        case "$ping_json" in
+            *'$'*'$'*) ok "the server's own fields survived the rewrite" ;;
+            *) fail "the response lost the fields the game reads: $ping_json" ;;
+        esac
+    else
+        case "$ping_json" in
+            *'"version"'*) ok "the rest of the status survived the rewrite" ;;
+            *) fail "the status response lost its own fields: $ping_json" ;;
+        esac
+        case "$ping_json" in
+            *'"enforceSecureProfile":true'*) ok "and passed on that it checks signatures here" ;;
+            *) fail "did not declare secure profile enforcement, which it was started with" ;;
+        esac
+    fi
 else
     fail "Loki run did not come up"
 fi

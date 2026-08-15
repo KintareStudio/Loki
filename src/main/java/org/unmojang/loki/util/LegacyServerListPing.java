@@ -133,4 +133,43 @@ public final class LegacyServerListPing {
     private static char separatorOf(String response) {
         return response.length() != 0 && response.charAt(0) == SECTION ? NUL : SECTION;
     }
+
+    /**
+     * The same append, done to the bytes a server is about to write instead of to a string.
+     * <p>
+     * A response on the wire is {@code 0xFF}, a short holding the number of characters, and that
+     * many UTF-16BE characters. Rewriting it means decoding, appending and re-encoding, since the
+     * count is in characters and the declaration changes it.
+     *
+     * @return the frame to write, which is the one given when there is nothing to add, when it
+     *         would not fit, or when this is not a response frame at all. Never null, and never a
+     *         frame this could not fully account for: anything unexpected is passed through, since
+     *         a server that stops answering pings is worse than one that does not declare.
+     */
+    public static byte[] rewriteResponse(byte[] frame, String declaration, int budget) {
+        if (frame == null || declaration == null || declaration.length() == 0) return frame;
+        if (frame.length < 3 || (frame[0] & 0xFF) != PACKET_RESPONSE) return frame;
+
+        int count = ((frame[1] & 0xFF) << 8) | (frame[2] & 0xFF);
+        if (frame.length != 3 + count * 2) return frame; // partial write, or not a frame we know
+
+        char[] chars = new char[count];
+        for (int i = 0; i < count; i++) {
+            chars[i] = (char) (((frame[3 + i * 2] & 0xFF) << 8) | (frame[4 + i * 2] & 0xFF));
+        }
+
+        String response = new String(chars);
+        String appended = append(response, declaration, budget);
+        if (appended.equals(response)) return frame;
+
+        byte[] rewritten = new byte[3 + appended.length() * 2];
+        rewritten[0] = (byte) PACKET_RESPONSE;
+        rewritten[1] = (byte) (appended.length() >> 8);
+        rewritten[2] = (byte) appended.length();
+        for (int i = 0; i < appended.length(); i++) {
+            rewritten[3 + i * 2] = (byte) (appended.charAt(i) >> 8);
+            rewritten[4 + i * 2] = (byte) appended.charAt(i);
+        }
+        return rewritten;
+    }
 }

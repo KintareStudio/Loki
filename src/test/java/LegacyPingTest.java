@@ -62,6 +62,28 @@ public class LegacyPingTest {
         }
     }
 
+    /** The bytes a server writes: 0xFF, a character count, and that many UTF-16BE characters. */
+    private static byte[] frameOf(String response) {
+        byte[] frame = new byte[3 + response.length() * 2];
+        frame[0] = (byte) 0xFF;
+        frame[1] = (byte) (response.length() >> 8);
+        frame[2] = (byte) response.length();
+        for (int i = 0; i < response.length(); i++) {
+            frame[3 + i * 2] = (byte) (response.charAt(i) >> 8);
+            frame[4 + i * 2] = (byte) response.charAt(i);
+        }
+        return frame;
+    }
+
+    private static String stringOf(byte[] frame) {
+        int count = ((frame[1] & 0xFF) << 8) | (frame[2] & 0xFF);
+        char[] chars = new char[count];
+        for (int i = 0; i < count; i++) {
+            chars[i] = (char) (((frame[3 + i * 2] & 0xFF) << 8) | (frame[4 + i * 2] & 0xFF));
+        }
+        return new String(chars);
+    }
+
     private static String extended(String motd) {
         return SECTION + "1" + NUL + "78" + NUL + "1.6.4" + NUL + motd + NUL + "0" + NUL + "20";
     }
@@ -126,6 +148,29 @@ public class LegacyPingTest {
         check("but a URL does not, and is refused rather than truncated",
                 beta.equals(LegacyServerListPing.append(beta, api,
                         LegacyServerListPing.MAX_RESPONSE_CHARS_BETA)), null);
+
+        System.out.println();
+        System.out.println("== rewriting the frame a server is about to write ==");
+        String original = plain("A Minecraft Server");
+        byte[] frame = frameOf(original);
+        byte[] rewritten = LegacyServerListPing.rewriteResponse(frame, api,
+                LegacyServerListPing.MAX_RESPONSE_CHARS);
+        check("the count in the header is updated, not just the text",
+                ((rewritten[1] & 0xFF) << 8 | (rewritten[2] & 0xFF)) == original.length()
+                        + 1 + "loki=".length() + api.length(),
+                String.valueOf((rewritten[1] & 0xFF) << 8 | (rewritten[2] & 0xFF)));
+        check("and what comes out parses back to the declaration",
+                api.equals(LegacyServerListPing.declaration(stringOf(rewritten))), null);
+
+        check("a frame that is not a response is passed through",
+                LegacyServerListPing.rewriteResponse(new byte[]{0x02, 0, 0}, api, 256)[0] == 0x02,
+                null);
+        byte[] truncated = new byte[]{(byte) 0xFF, 0, 9, 0, 'x'};
+        check("so is one whose length does not match what arrived",
+                LegacyServerListPing.rewriteResponse(truncated, api, 256) == truncated, null);
+        check("and one that would not fit is left exactly as it was",
+                LegacyServerListPing.rewriteResponse(frame, api,
+                        LegacyServerListPing.MAX_RESPONSE_CHARS_BETA) == frame, null);
 
         System.out.println();
         System.out.println("== over the wire ==");

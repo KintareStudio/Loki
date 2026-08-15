@@ -1,8 +1,10 @@
-package org.unmojang.loki.legacy;
+package org.unmojang.loki.hooks;
+
+import org.unmojang.loki.util.LegacyProtocol;
+import org.unmojang.loki.util.LegacyStreams;
 
 import org.unmojang.loki.util.logger.NilLogger;
 
-import org.unmojang.loki.hooks.ProfileRedirect;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -99,7 +101,12 @@ public final class LegacyAnnounce {
         try {
             java.net.InetAddress address = socket.getInetAddress();
             if (address == null) return; // closed under us, so there is no server to be on
-            ProfileRedirect.noteDeclaredRoot(address.getHostAddress(), socket.getPort(), declaration);
+            // Through the system loader on purpose: this class is on the bootstrap path, and the
+            // ProfileRedirect that must hear about it is the one the game.s own lookups consult.
+            Class.forName("org.unmojang.loki.hooks.ProfileRedirect", true,
+                            ClassLoader.getSystemClassLoader())
+                    .getMethod("noteDeclaredRoot", String.class, int.class, String.class)
+                    .invoke(null, address.getHostAddress(), Integer.valueOf(socket.getPort()), declaration);
         } catch (Throwable t) {
             log.debug("Could not apply what the server declared (" + t + ")");
         }

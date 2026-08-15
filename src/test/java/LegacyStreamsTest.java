@@ -1,5 +1,5 @@
-import org.unmojang.loki.legacy.LegacyProtocol;
-import org.unmojang.loki.legacy.LegacyStreams;
+import org.unmojang.loki.util.LegacyProtocol;
+import org.unmojang.loki.util.LegacyStreams;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;

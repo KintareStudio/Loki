@@ -1,4 +1,4 @@
-package org.unmojang.loki.legacy;
+package org.unmojang.loki.util;
 
 /**
  * Where, in each pre-1.7 protocol, the two holes are.

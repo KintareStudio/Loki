@@ -494,6 +494,73 @@ public class LokiUtil {
         }
     }
 
+    /**
+     * Puts the three classes the pre-1.7 announcement needs where {@code java.net.Socket} can see
+     * them, which is the bootstrap class loader and nowhere else.
+     * <p>
+     * The rest of the hooks deliberately do not go there — it was found to cause IllegalAccessErrors
+     * on Java 8 — and they do not need to: nothing else Loki patches is loaded by the bootstrap. The
+     * socket filters are, because {@code java.net.Socket} is, and a class loaded there can only
+     * resolve names through the loader that loaded it.
+     * <p>
+     * These three carry no Loki dependencies for exactly this reason. What they have to say to the
+     * rest of Loki they say through {@link org.unmojang.loki.hooks.ProfileRedirect}, reached through
+     * the system class loader so that the copy that answers is the one the game's own lookups
+     * consult, rather than a second one sitting on the bootstrap path beside them.
+     */
+    private static void appendLegacyHooksToBootstrap(Instrumentation inst) {
+        String[] wanted = {
+                "org/unmojang/loki/hooks/LegacyAnnounce.class",
+                "org/unmojang/loki/util/LegacyStreams.class",
+                "org/unmojang/loki/util/LegacyProtocol.class",
+                // Their logger, which depends on nothing but the JDK, so a second copy of it on the
+                // bootstrap path costs a few classes and no behaviour
+                "org/unmojang/loki/util/logger/NilLogger.class",
+                "org/unmojang/loki/util/logger/NilLogImpl.class",
+                "org/unmojang/loki/util/logger/NilLogManager.class",
+                "org/unmojang/loki/util/logger/AdHocLogImpl.class",
+        };
+        try {
+            File agentJar = new File(LokiUtil.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            File tmpJar = File.createTempFile("Loki-legacy", ".jar");
+            tmpJar.deleteOnExit();
+
+            JarInputStream jis = new JarInputStream(new FileInputStream(agentJar));
+            JarOutputStream jos = new JarOutputStream(new FileOutputStream(tmpJar));
+            try {
+                JarEntry entry;
+                while ((entry = jis.getNextJarEntry()) != null) {
+                    String name = entry.getName();
+                    boolean take = false;
+                    for (int i = 0; i < wanted.length; i++) {
+                        // Inner classes come along, and they are named after their outer one
+                        if (name.equals(wanted[i])
+                                || name.startsWith(wanted[i].replace(".class", "$"))) {
+                            take = true;
+                            break;
+                        }
+                    }
+                    if (!take) continue;
+
+                    jos.putNextEntry(new JarEntry(name));
+                    byte[] buffer = new byte[8192];
+                    int read;
+                    while ((read = jis.read(buffer)) != -1) jos.write(buffer, 0, read);
+                    jos.closeEntry();
+                }
+            } finally {
+                jis.close();
+                jos.close();
+            }
+
+            Method append = Instrumentation.class.getMethod("appendToBootstrapClassLoaderSearch", JarFile.class);
+            append.invoke(inst, new JarFile(tmpJar));
+            Loki.log.debug("Appended the legacy socket hooks to the bootstrap classpath");
+        } catch (Throwable t) {
+            Loki.log.debug("No pre-1.7 announcement on this JVM (" + t + ")");
+        }
+    }
+
     private static void appendHooksToClasspath(Instrumentation inst) {
         try {
             File agentJar = new File(LokiUtil.class.getProtectionDomain().getCodeSource().getLocation().toURI());
@@ -628,6 +695,7 @@ public class LokiUtil {
         // Pin the hook classes to this classloader before appendHooksToClasspath
         pinHookClasses();
         appendHooksToClasspath(inst);
+        appendLegacyHooksToBootstrap(inst);
     }
 
     private static int getJavaVersion() {

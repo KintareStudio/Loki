@@ -1,4 +1,4 @@
-package org.unmojang.loki.legacy;
+package org.unmojang.loki.util;
 
 import java.io.BufferedInputStream;
 import java.io.FilterInputStream;

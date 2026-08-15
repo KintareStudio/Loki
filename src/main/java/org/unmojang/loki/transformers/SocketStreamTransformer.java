@@ -30,7 +30,7 @@ import org.unmojang.loki.LokiUtil;
 public class SocketStreamTransformer extends LokiTransformer {
     private static final String SOCKET = "java/net/Socket";
     private static final String SERVER_SOCKET = "java/net/ServerSocket";
-    private static final String ANNOUNCE = "org/unmojang/loki/legacy/LegacyAnnounce";
+    private static final String ANNOUNCE = "org/unmojang/loki/hooks/LegacyAnnounce";
 
     protected boolean matches(String className) {
         return SOCKET.equals(className) || SERVER_SOCKET.equals(className);

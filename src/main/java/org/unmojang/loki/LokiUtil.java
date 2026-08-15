@@ -272,20 +272,53 @@ public class LokiUtil {
         keys.append(der);
     }
 
+    /**
+     * The API metadata a launcher already handed us, Base64 encoded, or null if it did not.
+     * <p>
+     * authlib-injector takes this so a launcher that has the document can save the client the
+     * request, and so a session can start when the API server is slow or unreachable. Loki takes
+     * over from authlib-injector and would otherwise throw that away and fetch it anyway.
+     *
+     * @return the decoded document, or null when neither property is set or it cannot be read
+     */
+    public static String prefetchedMetadata() {
+        String encoded = System.getProperty("authlibinjector.yggdrasil.prefetched");
+        if (encoded == null || encoded.length() == 0) {
+            // The name authlib-injector deprecated but still reads
+            encoded = System.getProperty("org.to2mbn.authlibinjector.config.prefetched");
+        }
+        if (encoded == null || encoded.length() == 0) return null;
+
+        try {
+            return new String(org.unmojang.loki.util.Base64.decode(encoded.trim()), "UTF-8");
+        } catch (Exception e) {
+            Loki.log.warn("Ignoring unreadable prefetched API metadata", e);
+            return null;
+        }
+    }
+
     private static void initServerMetadata(String authlibInjectorApiLocation) {
-        if (Hooks.OFFLINE_MODE) {
+        // Before the offline check, not after. Being offline is the case this document is for: a
+        // launcher hands it over precisely so a session can start without reaching the API server.
+        String prefetched = prefetchedMetadata();
+        if (prefetched == null && Hooks.OFFLINE_MODE) {
             SERVER_NAME = "Offline";
             return;
         }
         try {
-            HttpURLConnection conn = (HttpURLConnection) new URL(authlibInjectorApiLocation).openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
-            conn.connect();
+            String jsonText = prefetched;
+            if (jsonText != null) {
+                Loki.log.debug("Using the API metadata the launcher prefetched");
+            } else {
+                HttpURLConnection conn = (HttpURLConnection) new URL(authlibInjectorApiLocation).openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                conn.connect();
 
-            if (conn.getResponseCode() != 200) return;
-            String jsonText = HttpUtil.readStream(conn.getInputStream());
+                if (conn.getResponseCode() != 200) return;
+                jsonText = HttpUtil.readStream(conn.getInputStream());
+            }
             Json.JSONObject json = new Json.JSONObject(jsonText);
 
             Json.JSONObject meta = json.optJSONObject("meta");

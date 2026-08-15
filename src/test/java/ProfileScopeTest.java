@@ -1,3 +1,4 @@
+import org.unmojang.loki.LokiUtil;
 import org.unmojang.loki.hooks.ProfileRedirect;
 
 /**
@@ -21,7 +22,7 @@ public class ProfileScopeTest {
         System.out.println((actual == expected ? "  ok   " : "  FAIL ") + label + " -> " + actual);
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         String session = "https://declared.example/sessionserver";
         String account = "https://declared.example/api";
         String services = "https://declared.example/minecraftservices";
@@ -65,6 +66,50 @@ public class ProfileScopeTest {
         expect("authorization header", ProfileRedirect.carriesCredentials("Bearer tok", null), true);
         expect("accessToken in the query", ProfileRedirect.carriesCredentials(null, "accessToken=tok"), true);
         expect("an ordinary profile query", ProfileRedirect.carriesCredentials(null, "unsigned=false"), false);
+
+        System.out.println();
+        System.out.println("== what a server declares about itself ==");
+        expect("nothing to declare when it was pointed nowhere",
+                org.unmojang.loki.hooks.ProfileAdvertiser.declaration(), null);
+
+        // Its own hosts, whichever way it was configured. No root is assumed, and none is needed.
+        System.setProperty("minecraft.api.session.host", "https://api.example/sessions");
+        System.setProperty("minecraft.api.services.host", "https://elsewhere.example/svc");
+        expect("the endpoints it actually uses, named outright",
+                org.unmojang.loki.hooks.ProfileAdvertiser.declaration(),
+                "\"session\":\"https://api.example/sessions\","
+                        + "\"services\":\"https://elsewhere.example/svc\"");
+
+        System.setProperty(ProfileRedirect.PROP_TEXTURE_DOMAINS, "cdn.example,other.example");
+        expect("with the texture domains it knows, so the client need not go asking",
+                org.unmojang.loki.hooks.ProfileAdvertiser.declaration(),
+                "\"session\":\"https://api.example/sessions\","
+                        + "\"services\":\"https://elsewhere.example/svc\","
+                        + "\"skinDomains\":[\"cdn.example\",\"other.example\"]");
+        System.clearProperty(ProfileRedirect.PROP_TEXTURE_DOMAINS);
+        System.clearProperty("minecraft.api.session.host");
+        System.clearProperty("minecraft.api.services.host");
+
+        System.out.println();
+        System.out.println("== metadata a launcher prefetched ==");
+        String document = "{\"meta\":{\"serverName\":\"prefetched\"}}";
+        String encoded = java.util.Base64.getEncoder().encodeToString(document.getBytes("UTF-8"));
+        expect("nothing to read when no launcher set it", LokiUtil.prefetchedMetadata(), null);
+
+        System.setProperty("org.to2mbn.authlibinjector.config.prefetched", encoded);
+        expect("the name authlib-injector deprecated is still read",
+                LokiUtil.prefetchedMetadata(), document);
+
+        String newer = "{\"meta\":{\"serverName\":\"newer\"}}";
+        System.setProperty("authlibinjector.yggdrasil.prefetched",
+                java.util.Base64.getEncoder().encodeToString(newer.getBytes("UTF-8")));
+        expect("and the current name wins over it", LokiUtil.prefetchedMetadata(), newer);
+
+        System.setProperty("authlibinjector.yggdrasil.prefetched", "not base64 @@@");
+        System.clearProperty("org.to2mbn.authlibinjector.config.prefetched");
+        expect("something unreadable is ignored rather than thrown",
+                LokiUtil.prefetchedMetadata(), null);
+        System.clearProperty("authlibinjector.yggdrasil.prefetched");
 
         System.out.println();
         System.out.println("== kill switch ==");

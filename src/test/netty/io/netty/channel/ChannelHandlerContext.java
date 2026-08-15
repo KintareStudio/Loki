@@ -7,6 +7,8 @@ package io.netty.channel;
  * {@link ChannelOutboundInvoker} for why that matters.
  */
 public interface ChannelHandlerContext extends ChannelOutboundInvoker {
+    Fake.Channel channel();
+
     ChannelPipeline pipeline();
 
     ChannelHandler handler();

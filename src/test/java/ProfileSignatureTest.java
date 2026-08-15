@@ -44,8 +44,12 @@ public class ProfileSignatureTest {
     }
 
     private static KeyPair rsa() throws Exception {
+        return rsa(2048);
+    }
+
+    private static KeyPair rsa(int bits) throws Exception {
         KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-        generator.initialize(2048);
+        generator.initialize(bits);
         return generator.generateKeyPair();
     }
 
@@ -194,20 +198,25 @@ public class ProfileSignatureTest {
 
         KeyPair active = rsa();
         KeyPair grace = rsa();
+        // Published last and larger than the rest, because a rotation onto a different key size is
+        // the case a single number cannot describe and a "first key wins" reading gets wrong
+        KeyPair rotated = rsa(4096);
         KeyPair certificate = rsa();
         KeyPair stranger = rsa();
         KeyPair mojang = rsa();
         bundleMojangKey(mojang);
 
         HttpServer server = null;
-        if ("publickeys".equals(mode) || "metadata".equals(mode)) {
-            server = publicKeys(new KeyPair[]{active, grace}, new KeyPair[]{certificate});
+        if ("publickeys".equals(mode)) {
+            server = publicKeys(new KeyPair[]{active, grace, rotated}, new KeyPair[]{certificate});
             System.setProperty("minecraft.api.services.host", "http://127.0.0.1:" + server.getAddress().getPort());
         } else {
             // A port nothing is listening on, so the fetch fails rather than hangs
             System.setProperty("minecraft.api.services.host", "http://127.0.0.1:1");
         }
-        if ("metadata".equals(mode)) {
+        if (!"offline".equals(mode)) {
+            // Declared in the metadata in both modes, to show which source wins when the endpoint
+            // answers and which is left when it does not
             System.setProperty("Loki.signature_keys", der(stranger));
         }
 
@@ -240,9 +249,17 @@ public class ProfileSignatureTest {
             check("the active key verifies", valid(property, VALUE, sign(active, VALUE)), null);
             check("a second published key verifies too, so rotation does not break profiles",
                     valid(property, VALUE, sign(grace, VALUE)), null);
-            check("an unpublished key does not", !valid(property, VALUE, sign(stranger, VALUE)), null);
+            check("a key only the metadata declares does not, since the endpoint answered",
+                    !valid(property, VALUE, sign(stranger, VALUE)), null);
             check("Mojang's own key does, for profiles proxied from a fallback",
                     valid(property, VALUE, sign(mojang, VALUE)), null);
+            check("a key of a different size verifies too, so a rotation may change it",
+                    valid(property, VALUE, sign(rotated, VALUE)), null);
+            check("and the reported key size is the largest published, not whichever came first",
+                    org.unmojang.loki.hooks.ProfileKeys.keyBitCount(property,
+                            org.unmojang.loki.hooks.ProfileKeys.KEY_TYPE_PROPERTY) == 4096,
+                    String.valueOf(org.unmojang.loki.hooks.ProfileKeys.keyBitCount(property,
+                            org.unmojang.loki.hooks.ProfileKeys.KEY_TYPE_PROPERTY)));
             check("a tampered value does not",
                     !valid(property, VALUE + "x", sign(active, VALUE)), null);
             check("an unsigned property does not", !valid(property, VALUE, null), null);
@@ -252,11 +269,11 @@ public class ProfileSignatureTest {
             check("the keys outlive the API server going away",
                     valid(property, VALUE, sign(active, VALUE)), null);
         } else if ("metadata".equals(mode)) {
-            check("the key from the metadata verifies", valid(property, VALUE, sign(stranger, VALUE)), null);
-            check("the endpoint is not consulted when metadata declared keys",
-                    !valid(property, VALUE, sign(active, VALUE)), null);
+            check("the metadata is fallen back on when the endpoint has nothing",
+                    valid(property, VALUE, sign(stranger, VALUE)), null);
+            check("and answers for certificates too, having no way to tell them apart",
+                    verifiedByCertificateSignature(classes, VALUE, sign(stranger, VALUE)), null);
             check("Mojang's key still verifies", valid(property, VALUE, sign(mojang, VALUE)), null);
-            server.stop(0);
         } else {
             check("Mojang's key is what is left when nothing is reachable",
                     valid(property, VALUE, sign(mojang, VALUE)), null);

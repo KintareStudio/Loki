@@ -375,9 +375,6 @@ public class LokiUtil {
         String authlibInjectorApiLocation = getAuthlibInjectorApiLocation(server);
         if (authlibInjectorApiLocation == null) authlibInjectorApiLocation = server;
         Loki.log.info("Using authlib-injector API Server: " + authlibInjectorApiLocation);
-        // Kept whole, not just as the five hosts derived from it: a server advertising itself to
-        // Loki clients has to name the root, since that is what the client knows how to expand.
-        System.setProperty(ProfileAdvertiser.PROP_API_ROOT, authlibInjectorApiLocation);
         System.setProperty("minecraft.api.env", "custom");
         System.setProperty("minecraft.api.account.host", authlibInjectorApiLocation + "/api");
         System.setProperty("minecraft.api.auth.host", authlibInjectorApiLocation + "/authserver");

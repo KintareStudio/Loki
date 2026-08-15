@@ -5,6 +5,7 @@ import org.unmojang.loki.util.HttpUtil;
 import org.unmojang.loki.util.Json;
 import org.unmojang.loki.util.logger.NilLogger;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.nio.ByteBuffer;
@@ -13,6 +14,7 @@ import java.net.URL;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.Signature;
+import java.security.interfaces.RSAPublicKey;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -60,7 +62,84 @@ public final class ProfileKeys {
     private static volatile PublicKey mojangKey;
     private static volatile boolean mojangKeyResolved;
 
+    /** The API server the current game server declared, and the keys read from it. */
+    private static volatile String declaredServices;
+    private static volatile String declaredRoot;
+    private static volatile String declaredFetchedFor;
+    private static volatile long declaredRetryDue;
+    private static volatile KeySet declared = KeySet.EMPTY;
+
     private ProfileKeys() {}
+
+    /**
+     * Trusts the profile property keys of an API server a game server declared, for as long as the
+     * player is on it.
+     * <p>
+     * Without this the redirect and {@code Loki.enforce_secure_profile} cannot both be on: profiles
+     * come from the declared server, signed by its keys, and are then checked against the
+     * configured server's, so every one of them fails.
+     * <p>
+     * Joining a server already makes its Yggdrasil the authority for that session: it is the one
+     * that let you in, and everyone around you authenticated against it too. Their textures and
+     * their chat certificates carry its signature, not your API server's, so trusting it is what
+     * makes a third party server work at all rather than an extra concession.
+     * <p>
+     * Worth being plain about the cost anyway. While connected, that server's Yggdrasil can vouch
+     * for a texture or for whose chat key is whose, which is the guarantee enforce_secure_profile
+     * otherwise gives against the server you are playing on. The bound is time: these are added to
+     * the configured keys rather than replacing them, and dropped the moment the player leaves.
+     *
+     * @param servicesHost where the server said its services live, which is where {@code
+     *                     /publickeys} is asked of it
+     * @param apiRoot      its authlib-injector root when it named one, for the fallback, or null
+     */
+    public static void useDeclared(String servicesHost, String apiRoot) {
+        if (servicesHost == null && apiRoot == null) {
+            if (declaredSource() != null) log.debug("Back to the configured signing keys");
+            declaredServices = null;
+            declaredRoot = null;
+            forgetDeclared();
+            return;
+        }
+        declaredServices = servicesHost;
+        declaredRoot = apiRoot;
+        forgetDeclared(); // whatever was held belonged to another server
+    }
+
+    private static void forgetDeclared() {
+        declaredFetchedFor = null;
+        declaredRetryDue = 0L;
+        declared = KeySet.EMPTY;
+    }
+
+    /** What the held keys belong to, so a move to a different server is noticed. */
+    private static String declaredSource() {
+        if (declaredServices == null && declaredRoot == null) return null;
+        return declaredServices + " " + declaredRoot;
+    }
+
+    /** Reads them now, off a background thread, so the first profile does not wait for it. */
+    public static void warmDeclared() {
+        declaredKeys();
+    }
+
+    private static KeySet declaredKeys() {
+        String source = declaredSource();
+        if (source == null) return KeySet.EMPTY;
+        if (source.equals(declaredFetchedFor)) return declared;
+        // A server that was unreachable a moment ago may not be now, and a session lasts hours.
+        // Retried on the same interval as the configured server rather than given up on for good.
+        if (System.currentTimeMillis() < declaredRetryDue) return declared;
+
+        KeySet fetched = fetchFrom(declaredServices, declaredRoot);
+        if (fetched.isEmpty()) {
+            declaredRetryDue = System.currentTimeMillis() + RETRY_INTERVAL_MS;
+            return declared;
+        }
+        declared = fetched;
+        declaredFetchedFor = source;
+        return fetched;
+    }
 
     /**
      * The two kinds of key an API server publishes, kept apart.
@@ -106,7 +185,7 @@ public final class ProfileKeys {
             return false;
         }
 
-        List<PublicKey> keys = trusted(owner, refreshServerKeys().profileProperty);
+        List<PublicKey> keys = trusted(owner, KEY_TYPE_PROPERTY);
         for (int i = 0; i < keys.size(); i++) {
             if (verify(keys.get(i), value, signatureBytes)) return true;
         }
@@ -158,6 +237,34 @@ public final class ProfileKeys {
     }
 
     /**
+     * How many bits the key of this type has, for the key info that reports it.
+     * <p>
+     * Measured rather than assumed. Mojang's is 4096 and so is most everyone's, but a caller may use
+     * this to size or sanity check a signature, and answering 4096 for a 2048 bit key would have it
+     * reject signatures that are perfectly good.
+     * <p>
+     * An API server may publish keys of several sizes — nothing stops a 2048 bit key sitting beside
+     * a 4096 bit one through a rotation — and one number cannot describe them all. The largest is
+     * the answer that costs least: this is asked in order to size or bound a signature, and a bound
+     * that is too small rejects the signatures made by every key above it, while one that is too
+     * large only fails to reject something no verification here would have accepted anyway. Which
+     * key actually signed is not knowable from here, and is not this method's question: verification
+     * tries them all.
+     *
+     * @return the largest trusted key of this type, or Mojang's 4096 when nothing is published
+     */
+    public static int keyBitCount(Object owner, String keyType) {
+        int largest = 0;
+        List<PublicKey> published = trusted(owner, keyType);
+        for (int i = 0; i < published.size(); i++) {
+            if (!(published.get(i) instanceof RSAPublicKey)) continue;
+            int bits = ((RSAPublicKey) published.get(i)).getModulus().bitLength();
+            if (bits > largest) largest = bits;
+        }
+        return largest != 0 ? largest : 4096;
+    }
+
+    /**
      * Whether a player's key certificate was signed by any trusted certificate key.
      * <p>
      * This is what BungeeCord's {@code EncryptionUtil.check} does, done over a set. Its own version
@@ -183,7 +290,7 @@ public final class ProfileKeys {
                     ? certificatePayload(uuid, expiry, encoded)
                     : legacyCertificatePayload(expiry, encoded);
 
-            List<PublicKey> keys = trusted(playerPublicKey, refreshServerKeys().playerCertificate);
+            List<PublicKey> keys = trusted(playerPublicKey, KEY_TYPE_CERTIFICATE);
             for (int i = 0; i < keys.size(); i++) {
                 if (verify(keys.get(i), signed, signature)) return true;
             }
@@ -222,11 +329,7 @@ public final class ProfileKeys {
      * @param keyType {@code PROFILE_PROPERTY} or {@code PROFILE_KEY}, as the enum names them
      */
     public static Signature signatureFor(Object owner, String keyType) {
-        KeySet keys = refreshServerKeys();
-        List<PublicKey> published = KEY_TYPE_PROPERTY.equals(keyType)
-                ? keys.profileProperty
-                : keys.playerCertificate;
-        return new MultiKeySignature(trusted(owner, published));
+        return new MultiKeySignature(trusted(owner, keyType));
     }
 
     private static boolean verify(PublicKey key, String value, byte[] signature) {
@@ -249,14 +352,30 @@ public final class ProfileKeys {
     }
 
     /**
-     * One kind of published key, plus Mojang's.
+     * Every key trusted for this kind of signature right now.
      * <p>
-     * Mojang's is always in the list rather than only when the server's is missing. A server that
-     * proxies from a fallback hands over properties and certificates Mojang signed, and those are
-     * as genuine as its own; dropping the key would reject them.
+     * The configured API server's, plus Mojang's, plus — for profile properties only — those of an
+     * API server the game server declared.
+     * <p>
+     * Mojang's is always here rather than only when the server's is missing. A server that proxies
+     * from a fallback hands over properties and certificates Mojang signed, and those are as genuine
+     * as its own; dropping the key would reject them.
+     * <p>
+     * A declared server's keys count for both kinds, because on that server they are what signed
+     * both. The players around you authenticated against its Yggdrasil, so their chat certificates
+     * carry its signature just as their textures do; checking either against the keys your own API
+     * server publishes would reject every player on a server working exactly as intended. The bound
+     * on this is time, not type: it lasts while you are connected and no longer.
      */
-    private static List<PublicKey> trusted(Object owner, List<PublicKey> published) {
-        List<PublicKey> keys = new ArrayList<PublicKey>(published);
+    private static List<PublicKey> trusted(Object owner, String keyType) {
+        boolean forProperties = KEY_TYPE_PROPERTY.equals(keyType);
+        KeySet configured = refreshServerKeys();
+        KeySet declaredSet = declaredKeys();
+
+        List<PublicKey> keys = new ArrayList<PublicKey>(
+                forProperties ? configured.profileProperty : configured.playerCertificate);
+        keys.addAll(forProperties ? declaredSet.profileProperty : declaredSet.playerCertificate);
+
         PublicKey mojang = mojangKey(owner);
         if (mojang != null) keys.add(mojang);
         return keys;
@@ -286,39 +405,94 @@ public final class ProfileKeys {
     }
 
     /**
-     * Prefers what authlib-injector metadata already declared, since Loki reads that document
-     * anyway and {@code signaturePublickeys} is the one place in that API where rotation is
-     * expressed. Falls back to {@code /publickeys}, which is where a Mojang-shaped API server puts
-     * the same thing.
+     * The configured API server's keys: {@code /publickeys} first, then authlib-injector metadata.
+     * <p>
+     * That order, and not the other way round, because the endpoint says which keys are for
+     * properties and which are for certificates while the metadata has a single field and no notion
+     * of the difference. Falling back to it means treating what it declares as answering for both,
+     * which is the best that can be done with it and worse than being told.
      */
     private static KeySet fetchServerKeys() {
-        // authlib-injector has one field for this and no notion of key types, so what it declares
-        // has to answer for both. A server that wants them apart publishes /publickeys.
+        String base = System.getProperty("minecraft.api.services.host", "https://api.minecraftservices.com");
+        KeySet published = fromPublicKeys(base);
+        if (!published.isEmpty()) return published;
+
         String declared = System.getProperty(PROP_SIGNATURE_KEYS, "");
         if (declared.length() != 0) {
             List<PublicKey> keys = parseAll(declared.split(","), "authlib-injector metadata");
             return new KeySet(keys, keys);
         }
+        return KeySet.EMPTY;
+    }
 
-        String base = System.getProperty("minecraft.api.services.host", "https://api.minecraftservices.com");
+    /**
+     * A declared server's keys, in the same order and for the same reason as the configured ones.
+     * <p>
+     * Asked of the services endpoint it named, which is the only place it has to have one; the
+     * authlib-injector document is consulted after, and only if it named a root at all.
+     */
+    private static KeySet fetchFrom(String servicesHost, String apiRoot) {
+        KeySet published = servicesHost == null ? KeySet.EMPTY : fromPublicKeys(servicesHost);
+        if (!published.isEmpty()) {
+            log.info("Also trusting " + published.profileProperty.size() + " property and "
+                    + published.playerCertificate.size() + " certificate key(s) declared by the server");
+            return published;
+        }
+
+        // One field in the authlib-injector document, so what it declares answers for both kinds
+        List<PublicKey> both = apiRoot == null ? Collections.<PublicKey>emptyList() : fromMetadata(apiRoot);
+        if (!both.isEmpty()) {
+            log.info("Also trusting " + both.size() + " key(s) declared by the server");
+            return new KeySet(both, both);
+        }
+
+        log.debug("The declared API server publishes no signing keys");
+        return KeySet.EMPTY;
+    }
+
+    private static List<PublicKey> fromMetadata(String apiRoot) {
         try {
-            HttpURLConnection conn = (HttpURLConnection) new URL(base + "/publickeys").openConnection();
-            conn.setRequestMethod("GET");
-            conn.setConnectTimeout(HTTP_TIMEOUT_MS);
-            conn.setReadTimeout(HTTP_TIMEOUT_MS);
-            if (conn.getResponseCode() != 200) {
-                log.debug("publickeys returned HTTP " + conn.getResponseCode());
-                return KeySet.EMPTY;
+            Json.JSONObject root = new Json.JSONObject(readDocument(apiRoot));
+            List<String> encoded = new ArrayList<String>();
+            Json.JSONArray declaredKeys = root.optJSONArray("signaturePublickeys");
+            if (declaredKeys != null) {
+                for (int i = 0; i < declaredKeys.length(); i++) encoded.add(declaredKeys.getString(i));
             }
+            if (encoded.isEmpty()) encoded.add(root.optString("signaturePublickey", ""));
 
-            Json.JSONObject published = new Json.JSONObject(HttpUtil.readStream(conn.getInputStream()));
-            return new KeySet(
-                    parseList(published, "profilePropertyKeys", base),
-                    parseList(published, "playerCertificateKeys", base));
+            List<PublicKey> keys = new ArrayList<PublicKey>();
+            for (int i = 0; i < encoded.size(); i++) {
+                // Armoured PEM in this document, unlike the Base64 DER /publickeys uses
+                PublicKey key = parse(encoded.get(i).replaceAll("-----[A-Z ]+-----", "")
+                        .replaceAll("\\s", ""));
+                if (key != null) keys.add(key);
+            }
+            return keys;
         } catch (Exception e) {
-            log.debug("Could not read " + base + "/publickeys (" + e + ")");
+            log.debug("No signing keys in the declared server's metadata (" + e + ")");
+            return Collections.emptyList();
+        }
+    }
+
+    private static KeySet fromPublicKeys(String servicesRoot) {
+        try {
+            Json.JSONObject published = new Json.JSONObject(readDocument(servicesRoot + "/publickeys"));
+            return new KeySet(
+                    parseList(published, "profilePropertyKeys", servicesRoot),
+                    parseList(published, "playerCertificateKeys", servicesRoot));
+        } catch (Exception e) {
+            log.debug("No signing keys at " + servicesRoot + "/publickeys (" + e + ")");
             return KeySet.EMPTY;
         }
+    }
+
+    private static String readDocument(String url) throws Exception {
+        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setRequestMethod("GET");
+        conn.setConnectTimeout(HTTP_TIMEOUT_MS);
+        conn.setReadTimeout(HTTP_TIMEOUT_MS);
+        if (conn.getResponseCode() != 200) throw new IOException("HTTP " + conn.getResponseCode());
+        return HttpUtil.readStream(conn.getInputStream());
     }
 
     private static List<PublicKey> parseList(Json.JSONObject published, String field, String base) {

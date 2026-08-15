@@ -44,6 +44,12 @@ Loki supports JVM arguments to enable or disable some behaviour.
   -DLoki.disable_profile_redirect=true
   ```
 
+- Keep enforcing the texture allowlist on a server that declared no `skinDomains`, instead of
+  accepting any texture host for the duration [^3]
+  ```
+  -DLoki.strict_texture_domains=true
+  ```
+
 - Stop a server declaring its own API server to Loki clients [^3]
   ```
   -DLoki.disable_profile_advertise=true

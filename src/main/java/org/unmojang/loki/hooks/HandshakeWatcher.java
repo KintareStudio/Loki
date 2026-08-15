@@ -85,6 +85,7 @@ public final class HandshakeWatcher {
             // which may well declare a different profile API than the one that sent them.
             if (nextState == Protocol.STATE_LOGIN || nextState == Protocol.STATE_TRANSFER) {
                 ProfileRedirect.noteJoin(host, port);
+                watchClose(ctx, host, port);
             } else {
                 log.trace("Connection to " + peer + " is a ping, not an arrival");
             }
@@ -92,6 +93,29 @@ public final class HandshakeWatcher {
             log.debug("Failed to read the handshake to " + peer + " (" + t + ")");
         } finally {
             NettyBridge.removeSelf(ctx);
+        }
+    }
+
+    /**
+     * Arranges for the arrival to be undone when this connection ends.
+     * <p>
+     * Joining a server widens what the client trusts, and the bound on that is meant to be the time
+     * the player spends there. Without this the widening ended at the next arrival instead, so a
+     * player who quit to the menu kept the last server's signing keys and texture domains for as
+     * long as they stayed there.
+     */
+    private static void watchClose(Object ctx, final String host, final int port) {
+        try {
+            Object channel = NettyBridge.call(ctx, "channel", new Object[0]);
+            NettyBridge.onClose(channel, new Runnable() {
+                public void run() {
+                    ProfileRedirect.noteLeave(host, port);
+                }
+            });
+        } catch (Throwable t) {
+            // The redirect then lasts until the next arrival, as it did before, rather than the
+            // join being abandoned over it
+            log.debug("Cannot watch for the disconnect from " + host + ":" + port + " (" + t + ")");
         }
     }
 }

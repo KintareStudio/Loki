@@ -23,9 +23,6 @@ import org.unmojang.loki.util.logger.NilLogger;
  * Neither state involved negotiates compression or encryption, so the bytes are always plain.
  */
 public final class ProfileAdvertiser {
-    /** Where {@code LokiUtil} leaves the authlib-injector root this server was pointed at. */
-    public static final String PROP_API_ROOT = "Loki.api_root";
-
     /** A status response, plus room for the declaration. */
     private static final int MAX_FRAME_BYTES = 300000;
     private static final int MAX_HOSTNAME_BYTES = 255 * 4;
@@ -39,17 +36,48 @@ public final class ProfileAdvertiser {
         return Boolean.getBoolean("Loki.disable_profile_advertise");
     }
 
-    /** The root to declare, or null when there is nothing worth declaring. */
-    static String apiRoot() {
+    /**
+     * The endpoints to declare, already written as the JSON body of the {@code loki} object, or
+     * null when this server has nothing to say.
+     * <p>
+     * The hosts themselves, not the root they may or may not have come from. A server always knows
+     * where it sends its own profile queries, whichever way it was configured, whereas a root only
+     * exists if it was pointed at an authlib-injector one — and a Yggdrasil server is under no
+     * obligation to arrange its paths the way that API expects. Naming them outright says what is
+     * true instead of what would have to be inferred and then re-derived on the other side.
+     */
+    public static String declaration() {
         if (disabled()) return null;
-        String root = System.getProperty(PROP_API_ROOT);
-        if (root == null || root.length() == 0) return null;
-        // A quote or a backslash would land inside a JSON string literal, and no API root has one
-        if (root.indexOf('"') != -1 || root.indexOf('\\') != -1) {
-            log.warn("Not declaring an API root containing quotes: " + root);
-            return null;
+
+        StringBuilder fields = new StringBuilder();
+        appendField(fields, "session", System.getProperty("minecraft.api.session.host"));
+        appendField(fields, "account", System.getProperty("minecraft.api.account.host"));
+        appendField(fields, "services", System.getProperty("minecraft.api.services.host"));
+        if (fields.length() == 0) return null;
+
+        // Whatever the client would otherwise have to read the metadata for, since it has no root
+        String domains = System.getProperty(ProfileRedirect.PROP_TEXTURE_DOMAINS, "");
+        if (domains.length() != 0 && domains.indexOf('"') == -1) {
+            fields.append(",\"skinDomains\":[");
+            String[] each = domains.split(",");
+            for (int i = 0; i < each.length; i++) {
+                if (i > 0) fields.append(",");
+                fields.append("\"").append(each[i]).append("\"");
+            }
+            fields.append("]");
         }
-        return root;
+        return fields.toString();
+    }
+
+    private static void appendField(StringBuilder fields, String name, String url) {
+        if (url == null || url.length() == 0) return;
+        // A quote or a backslash would land inside a JSON string literal, and no endpoint has one
+        if (url.indexOf('"') != -1 || url.indexOf('\\') != -1) {
+            log.warn("Not declaring an endpoint containing quotes: " + url);
+            return;
+        }
+        if (fields.length() != 0) fields.append(",");
+        fields.append("\"").append(name).append("\":\"").append(url).append("\"");
     }
 
     /**
@@ -60,7 +88,7 @@ public final class ProfileAdvertiser {
      *               call site does not depend on where Netty happens to be relocated to
      */
     public static void noteBind(Object future) {
-        if (apiRoot() == null) return;
+        if (declaration() == null) return;
         try {
             Object channel = NettyBridge.call(future, "channel", new Object[0]);
             Object pipeline = NettyBridge.call(channel, "pipeline", new Object[0]);
@@ -77,7 +105,7 @@ public final class ProfileAdvertiser {
                         }
                     });
             NettyBridge.call(pipeline, "addFirst", new Object[]{HANDLER_NAME, handler});
-            log.info("Declaring " + apiRoot() + " as this server's profile API");
+            log.info("Declaring this server's profile endpoints to Loki clients");
         } catch (Throwable t) {
             log.debug("Cannot advertise the profile API on this listener (" + t + ")");
         }
@@ -152,7 +180,7 @@ public final class ProfileAdvertiser {
                 log.trace("Status response of " + status.length() + " chars from a "
                         + frame.length + " byte frame: " + status);
 
-                String declared = withDeclaration(status, apiRoot());
+                String declared = withDeclaration(status, declaration());
                 if (declared == null) return msg;
 
                 Object rewritten = NettyBridge.wrapBytes(msg, Protocol.statusResponse(declared));
@@ -175,14 +203,14 @@ public final class ProfileAdvertiser {
      *
      * @return the new document, or null to leave this one alone
      */
-    static String withDeclaration(String status, String apiRoot) {
-        if (status == null || apiRoot == null) return null;
+    static String withDeclaration(String status, String fields) {
+        if (status == null || fields == null) return null;
         String trimmed = status.trim();
         if (!trimmed.startsWith("{")) return null;
         if (trimmed.indexOf("\"loki\"") != -1) return null; // already declared, by us or by a plugin
 
         String rest = trimmed.substring(1).trim();
-        String declaration = "\"loki\":{\"profileApi\":\"" + apiRoot + "\"}";
+        String declaration = "\"loki\":{" + fields + "}";
         return "{" + declaration + (rest.startsWith("}") ? "" : ",") + rest;
     }
 }

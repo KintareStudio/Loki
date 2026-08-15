@@ -139,6 +139,44 @@ public final class NettyBridge {
         return unpooled.getMethod("wrappedBuffer", byte[].class).invoke(null, (Object) data);
     }
 
+    /**
+     * Runs something once a channel closes, without keeping a handler in its pipeline.
+     * <p>
+     * A handler would see every packet on a live connection for the sake of one event at the end of
+     * it, which is a cost this has no business adding. Netty already offers the event on its own:
+     * the close future completes exactly once, when the channel does.
+     * <p>
+     * The listener interface is taken off {@code addListener}'s own signature rather than named.
+     * It lives in a different package from the channel types, and 1.7.x relocates the whole tree,
+     * so the method that accepts it is the one thing that always knows where it is.
+     *
+     * @param channel the channel to watch
+     * @param action  what to run when it closes, on whichever thread Netty completes the future on
+     */
+    public static void onClose(Object channel, final Runnable action) throws Exception {
+        Object closeFuture = call(channel, "closeFuture", new Object[0]);
+        Method addListener = resolve(closeFuture.getClass(), "addListener", new Object[]{null});
+        if (addListener == null) throw new NoSuchMethodException("closeFuture().addListener");
+
+        Class<?> listenerType = addListener.getParameterTypes()[0];
+        Object listener = Proxy.newProxyInstance(listenerType.getClassLoader(),
+                new Class<?>[]{listenerType}, new InvocationHandler() {
+                    public Object invoke(Object proxy, Method method, Object[] args) {
+                        if (args == null || args.length != 1) {
+                            if ("toString".equals(method.getName())) return "Loki";
+                            if ("hashCode".equals(method.getName())) {
+                                return Integer.valueOf(System.identityHashCode(proxy));
+                            }
+                            return null;
+                        }
+                        if ("equals".equals(method.getName())) return Boolean.valueOf(proxy == args[0]);
+                        action.run();
+                        return null;
+                    }
+                });
+        call(closeFuture, "addListener", new Object[]{listener});
+    }
+
     /** Drops a reference to a message Loki is replacing, so its buffer goes back to the pool. */
     public static void release(Object message) {
         try {

@@ -43,7 +43,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class ProfileRedirect {
     /** Key the server puts in its status JSON. */
     private static final String STATUS_KEY = "loki";
-    private static final String STATUS_FIELD = "profileApi";
+
+    /**
+     * What a server may put under that key. Each endpoint can be named on its own, which is the
+     * form that assumes nothing about how a server arranges itself; {@code profileApi} is the
+     * shorthand for one laid out the authlib-injector way, and is expanded into the others.
+     */
+    private static final String FIELD_API_ROOT = "profileApi";
+    private static final String FIELD_SESSION = "session";
+    private static final String FIELD_ACCOUNT = "account";
+    private static final String FIELD_SERVICES = "services";
+    private static final String FIELD_SKIN_DOMAINS = "skinDomains";
 
     /** Cross-classloader bus. Loki's hooks are duplicated per classloader, system properties are not. */
     private static final String PROP_PEER = "Loki.profile_redirect.peer";
@@ -58,6 +68,7 @@ public final class ProfileRedirect {
     private static final int HTTP_TIMEOUT_MS = 5000;
 
     private static final NilLogger log = NilLogger.get("Loki");
+    private static volatile String ownTextureDomains;
     private static final ConcurrentHashMap<String, Discovery> discoveries = new ConcurrentHashMap<String, Discovery>();
     private static final ExecutorService DISCOVERY_POOL = Executors.newFixedThreadPool(2, new ThreadFactory() {
         private final AtomicInteger threadId = new AtomicInteger(1);
@@ -72,13 +83,15 @@ public final class ProfileRedirect {
 
     private static final class Discovery {
         final CountDownLatch done = new CountDownLatch(1);
+        volatile String root;
         volatile String session;
         volatile String account;
         volatile String services;
         volatile List<String> skinDomains = new ArrayList<String>();
 
+        /** Any one of them is a declaration; a server need not name endpoints it does not move. */
         boolean found() {
-            return session != null;
+            return session != null || account != null || services != null;
         }
     }
 
@@ -123,6 +136,23 @@ public final class ProfileRedirect {
         discover(peer, host, port);
     }
 
+    /**
+     * Called when the connection that was the arrival closes, whichever way it ended.
+     * <p>
+     * Only for the server the client is actually on: a stale close arriving after the player has
+     * moved elsewhere would otherwise undo the arrival they are in the middle of. Joining the same
+     * address again re-discovers rather than being taken for the reconnect it is not, which is also
+     * what makes the declared keys be read afresh instead of served out of the last session's cache.
+     */
+    static void noteLeave(String host, int port) {
+        String peer = host + ":" + port;
+        if (!peer.equals(System.getProperty(PROP_PEER))) return;
+
+        System.clearProperty(PROP_PEER);
+        clearActiveOverride();
+        log.debug("Left " + peer + ", back to the configured profile API");
+    }
+
     private static String hostOf(InetSocketAddress address) {
         try { // getHostString is Java 7+, and unlike getHostName it never triggers a reverse lookup
             return (String) InetSocketAddress.class.getMethod("getHostString").invoke(address);
@@ -147,36 +177,84 @@ public final class ProfileRedirect {
                 } catch (Throwable t) {
                     log.debug("No profile API declared by " + peer + " (" + t + ")");
                 } finally {
-                    discovery.done.countDown();
                     publishIfCurrent(peer, discovery);
+                    // Read the declared keys here, where blocking is free, rather than leaving the
+                    // first profile of the session to wait for them
+                    ProfileKeys.warmDeclared();
+                    // Last, so that whoever was waiting finds the result in place rather than
+                    // merely finished. Counting down first let a lookup run against the state the
+                    // discovery was about to replace.
+                    discovery.done.countDown();
                 }
             }
         });
     }
 
+    /**
+     * Reads what the server declared, however it chose to say it.
+     * <p>
+     * The endpoints can be named outright, one field each, because a Yggdrasil server is under no
+     * obligation to lay its paths out the way authlib-injector does. {@code profileApi} stays as a
+     * shorthand for one that does: it is expanded here, so that from this point on there is only
+     * ever a set of endpoints and nothing downstream needs to know which form it arrived in.
+     */
     private static void resolve(Discovery discovery, String host, int port) throws Exception {
         String statusJson = ServerListPing.statusJson(host, port, PING_TIMEOUT_MS);
         Json.JSONObject declaration = new Json.JSONObject(statusJson).optJSONObject(STATUS_KEY);
         if (declaration == null) return;
 
-        String profileApi = declaration.optString(STATUS_FIELD, "");
-        if (profileApi.length() == 0) return;
-        profileApi = canonicalize(profileApi);
-        if (profileApi == null || !allowsCleartext(profileApi)) return;
+        String root = canonicalize(declaration.optString(FIELD_API_ROOT, ""));
+        if (root != null) {
+            root = followApiLocation(root);
+            discovery.root = root;
+            discovery.session = root + "/sessionserver";
+            discovery.account = root + "/api";
+            discovery.services = root + "/minecraftservices";
+            readSkinDomains(discovery, root);
+        }
 
-        String apiRoot = followApiLocation(profileApi);
-        if (!allowsCleartext(apiRoot)) return; // the redirect header could point elsewhere
-        readSkinDomains(discovery, apiRoot);
+        // Named endpoints win over the shorthand, since they say what the shorthand only assumes
+        String session = canonicalize(declaration.optString(FIELD_SESSION, ""));
+        String account = canonicalize(declaration.optString(FIELD_ACCOUNT, ""));
+        String services = canonicalize(declaration.optString(FIELD_SERVICES, ""));
+        if (session != null) discovery.session = session;
+        if (account != null) discovery.account = account;
+        if (services != null) discovery.services = services;
 
-        discovery.account = apiRoot + "/api";
-        discovery.services = apiRoot + "/minecraftservices";
-        discovery.session = apiRoot + "/sessionserver"; // set last, it is the "found" flag
-        log.info("Server declared a profile API: " + apiRoot);
+        Json.JSONArray domains = declaration.optJSONArray(FIELD_SKIN_DOMAINS);
+        if (domains != null) {
+            List<String> declared = new ArrayList<String>();
+            for (int i = 0; i < domains.length(); i++) declared.add(domains.getString(i));
+            discovery.skinDomains = declared;
+        }
+
+        if (!discovery.found()) return;
+        noteIfCleartext(discovery.session);
+        noteIfCleartext(discovery.account);
+        noteIfCleartext(discovery.services);
+        log.info("Server declared where profiles come from: " + declared(discovery));
+    }
+
+    /** What was actually named, since a server may move one endpoint and leave the others alone. */
+    private static String declared(Discovery discovery) {
+        StringBuilder said = new StringBuilder();
+        append(said, FIELD_SESSION, discovery.session);
+        append(said, FIELD_ACCOUNT, discovery.account);
+        append(said, FIELD_SERVICES, discovery.services);
+        return said.toString();
+    }
+
+    private static void append(StringBuilder said, String name, String url) {
+        if (url == null) return;
+        if (said.length() != 0) said.append(", ");
+        said.append(name).append("=").append(url);
     }
 
     /** Rejects anything that is not plainly an http(s) URL, and defaults a bare host to https. */
     private static String canonicalize(String url) {
+        if (url == null) return null;
         String canonical = url.trim();
+        if (canonical.length() == 0) return null; // a field left out, not a field to complain about
         if (canonical.indexOf("://") == -1) canonical = "https://" + canonical;
         if (!canonical.startsWith("http://") && !canonical.startsWith("https://")) {
             log.warn("Ignoring profile API declaration with unsupported scheme: " + url);
@@ -193,40 +271,16 @@ public final class ProfileRedirect {
     }
 
     /**
-     * Whether a declaration is allowed to be cleartext.
+     * Says so when a declaration is cleartext, and honours it anyway.
      * <p>
-     * A game server must not be able to move profile lookups onto plain HTTP, so an {@code http://}
-     * declaration is only honoured where cleartext was already on the table: a private or loopback
-     * address, which is how LAN and test servers are reached, or a configured API server that is
-     * itself {@code http://}, in which case the user has already accepted it.
+     * A declared API server is allowed plain HTTP for the same reason a configured one is: Loki
+     * does not decide for an operator which transport their API server runs on, and refusing here
+     * while accepting it there would be an inconsistency dressed up as a policy. What travels over
+     * it is profile reads, never credentials, which is enforced separately and unconditionally.
      */
-    static boolean allowsCleartext(String url) {
-        if (url == null || !url.startsWith("http://")) return true;
-
-        String host;
-        try {
-            host = new URL(url).getHost();
-        } catch (Exception e) {
-            return false;
-        }
-        if (isPrivateHost(host)) return true;
-        if (System.getProperty("minecraft.api.session.host", "https://sessionserver.mojang.com")
-                .startsWith("http://")) return true;
-
-        log.warn("Ignoring cleartext profile API declaration: " + url);
-        return false;
-    }
-
-    private static boolean isPrivateHost(String host) {
-        if ("localhost".equals(host) || host.endsWith(".localhost") || host.endsWith(".local")) return true;
-        if (host.startsWith("127.") || "::1".equals(host) || "[::1]".equals(host)) return true;
-        if (host.startsWith("10.") || host.startsWith("192.168.")) return true;
-        if (!host.startsWith("172.")) return false;
-        try { // 172.16.0.0/12
-            int second = Integer.parseInt(host.split("\\.")[1]);
-            return second >= 16 && second <= 31;
-        } catch (Exception e) {
-            return false;
+    private static void noteIfCleartext(String url) {
+        if (url != null && url.startsWith("http://")) {
+            log.warn("The declared profile API is cleartext: " + url);
         }
     }
 
@@ -273,15 +327,27 @@ public final class ProfileRedirect {
         if (!peer.equals(System.getProperty(PROP_PEER))) return; // we have since moved on
         if (!discovery.found()) return;
 
-        System.setProperty(PROP_SESSION, discovery.session);
-        System.setProperty(PROP_ACCOUNT, discovery.account);
-        System.setProperty(PROP_SERVICES, discovery.services);
+        // Only what was declared. An endpoint left unnamed keeps going where it was already going.
+        setOrClear(PROP_SESSION, discovery.session);
+        setOrClear(PROP_ACCOUNT, discovery.account);
+        setOrClear(PROP_SERVICES, discovery.services);
         System.setProperty(PROP_ORIGIN, peer);
-        registerTextureDomains(discovery.skinDomains);
-        log.info("Profile queries will be answered by " + discovery.session + " while on " + peer);
+        applyTextureDomains(discovery.skinDomains);
+        // Its keys as well as its profiles. What it serves is signed by them, so checking against
+        // the configured server's alone would reject every profile it answers with. Only recorded
+        // here, never fetched: this can run on the connection's own thread.
+        ProfileKeys.useDeclared(discovery.services, discovery.root);
+        log.info("Profiles will be answered by " + discovery.session + " while on " + peer);
+    }
+
+    private static void setOrClear(String property, String value) {
+        if (value != null) System.setProperty(property, value);
+        else System.clearProperty(property);
     }
 
     private static void clearActiveOverride() {
+        ProfileKeys.useDeclared(null, null); // back to the keys the client was configured with
+        restoreTextureDomains();
         System.clearProperty(PROP_SESSION);
         System.clearProperty(PROP_ACCOUNT);
         System.clearProperty(PROP_SERVICES);
@@ -289,23 +355,61 @@ public final class ProfileRedirect {
     }
 
     /**
-     * Widens the texture allowlist to cover the redirected server's CDN.
+     * Makes the texture allowlist fit the server being played on, until it is left.
      * <p>
-     * Only when the primary API server declared domains of its own: if it did not, Loki is in its
-     * allow-any mode and narrowing that here would break skins that work today.
+     * A server that names its texture domains has them added to the client's own. One that names
+     * none is taken to be saying nothing about textures, and the allowlist is stood down for the
+     * duration rather than blocking a CDN it was never going to have heard of. Set
+     * {@code Loki.strict_texture_domains} to keep the client's list enforced regardless, which is
+     * the client's call to make and not the server's: the list is what protects the client.
+     * <p>
+     * None of it applies to a client with no list of its own, which is Loki's default and already
+     * allows anything.
      */
-    private static void registerTextureDomains(List<String> domains) {
-        if (domains.isEmpty()) return;
-        String current = System.getProperty(PROP_TEXTURE_DOMAINS, "");
-        if (current.length() == 0) return;
+    private static void applyTextureDomains(List<String> declared) {
+        String own = ownTextureDomains();
+        if (own.length() == 0) return; // allowing everything already
 
-        StringBuilder merged = new StringBuilder(current);
-        for (int i = 0; i < domains.size(); i++) {
-            String domain = domains.get(i);
-            if (("," + current + ",").indexOf("," + domain + ",") != -1) continue;
+        if (declared.isEmpty()) {
+            if (Boolean.getBoolean("Loki.strict_texture_domains")) {
+                log.debug("Server declared no texture domains, keeping this client's list");
+                return;
+            }
+            log.debug("Server declared no texture domains, allowing any while on it");
+            System.clearProperty(PROP_TEXTURE_DOMAINS);
+            return;
+        }
+
+        StringBuilder merged = new StringBuilder(own);
+        for (int i = 0; i < declared.size(); i++) {
+            String domain = declared.get(i);
+            if (("," + own + ",").indexOf("," + domain + ",") != -1) continue;
             merged.append(",").append(domain);
         }
         System.setProperty(PROP_TEXTURE_DOMAINS, merged.toString());
+    }
+
+    /**
+     * The client's own allowlist, remembered before any server is allowed to alter it.
+     * <p>
+     * Kept separately because the property is what gets altered: without this, leaving a server
+     * would either strand its domains in the client's list for the rest of the session or lose the
+     * client's own along with them.
+     */
+    private static String ownTextureDomains() {
+        String own = ownTextureDomains;
+        if (own == null) {
+            own = System.getProperty(PROP_TEXTURE_DOMAINS, "");
+            ownTextureDomains = own;
+        }
+        return own;
+    }
+
+    private static void restoreTextureDomains() {
+        String own = ownTextureDomains;
+        if (own == null) return; // never touched
+        if (own.length() == 0) System.clearProperty(PROP_TEXTURE_DOMAINS);
+        else System.setProperty(PROP_TEXTURE_DOMAINS, own);
     }
 
     /**

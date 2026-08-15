@@ -15,15 +15,18 @@ public class Base64 {
         base64Inv['_'] = 63;
     }
 
-    /** Line length java.util.Base64's MIME encoder uses, which is what the format below expects. */
     private static final int MIME_LINE = 76;
 
     /**
-     * Encodes the way {@code Base64.getMimeEncoder()} does: 76 character lines separated by CRLF.
+     * Encodes as {@code Base64.getMimeEncoder(76, "\n")} does: 76 character lines separated by a
+     * bare newline, not the CRLF that encoder uses by default.
+     * <p>
+     * That separator is not a detail. It is how Mojang lays out the 1.19.0 player key certificate
+     * it signs, which is why BungeeCord asks for exactly this encoder to check one, and a signature
+     * over nearly the right bytes verifies against nothing.
      * <p>
      * Written out rather than called because the agent targets Java 5, where that encoder does not
-     * exist yet. It is needed to rebuild the string Mojang signs over a 1.19.0 player key, byte for
-     * byte, since a signature check is worth nothing if the bytes are nearly right.
+     * exist yet.
      */
     public static String encodeMime(byte[] data) {
         StringBuilder out = new StringBuilder();
@@ -35,7 +38,7 @@ public class Base64 {
                     | (remaining > 2 ? (data[i + 2] & 0xFF) : 0);
 
             if (lineLength == MIME_LINE) {
-                out.append("\r\n");
+                out.append('\n');
                 lineLength = 0;
             }
             out.append(base64Chars[(chunk >> 18) & 0x3F]);

@@ -1,5 +1,7 @@
 package io.netty.channel;
 
+import io.netty.util.concurrent.GenericFutureListener;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -30,16 +32,56 @@ public final class Fake {
         }
     }
 
+    /**
+     * Netty's close future, which completes once and only once, when the channel does.
+     * <p>
+     * Its {@code addListener} is what the bridge reads the listener type off, so it is typed here
+     * exactly as Netty types it rather than with something convenient.
+     */
+    public static final class CloseFuture {
+        private final List<GenericFutureListener> listeners = new ArrayList<GenericFutureListener>();
+        private boolean closed;
+
+        public CloseFuture addListener(GenericFutureListener listener) {
+            if (closed) {
+                listener.operationComplete(this);
+                return this;
+            }
+            listeners.add(listener);
+            return this;
+        }
+
+        void complete() {
+            if (closed) return;
+            closed = true;
+            List<GenericFutureListener> snapshot = new ArrayList<GenericFutureListener>(listeners);
+            for (int i = 0; i < snapshot.size(); i++) {
+                snapshot.get(i).operationComplete(this);
+            }
+        }
+    }
+
     public static final class Channel {
-        private final Pipeline pipeline = new Pipeline();
+        private final Pipeline pipeline;
+        private final CloseFuture closeFuture = new CloseFuture();
         private final String label;
 
         public Channel(String label) {
             this.label = label;
+            this.pipeline = new Pipeline(this);
         }
 
         public Pipeline pipeline() {
             return pipeline;
+        }
+
+        public CloseFuture closeFuture() {
+            return closeFuture;
+        }
+
+        /** What the game does when the player disconnects, however that came about. */
+        public void close() {
+            closeFuture.complete();
         }
 
         public String toString() {
@@ -49,6 +91,15 @@ public final class Fake {
 
     public static final class Pipeline implements ChannelPipeline {
         private final List<ChannelHandler> handlers = new ArrayList<ChannelHandler>();
+        private final Channel channel;
+
+        Pipeline(Channel channel) {
+            this.channel = channel;
+        }
+
+        public Channel channel() {
+            return channel;
+        }
 
         public ChannelPipeline addFirst(String name, ChannelHandler handler) {
             handlers.add(0, handler);
@@ -107,6 +158,10 @@ public final class Fake {
 
         public void read() {
             readReachedTheSocket = true;
+        }
+
+        public Channel channel() {
+            return ((Pipeline) pipeline).channel();
         }
 
         public ChannelPipeline pipeline() {

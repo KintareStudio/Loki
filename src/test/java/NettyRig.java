@@ -126,7 +126,8 @@ public class NettyRig {
     public static void main(String[] args) throws Exception {
         File jarFile = new File(args[0]);
         int port = Integer.parseInt(args[1]);
-        System.setProperty(ProfileAdvertiser.PROP_API_ROOT, API_ROOT);
+        // The server declares its own session endpoint, which is what it would have been given
+        System.setProperty("minecraft.api.session.host", API_ROOT + "/sessionserver");
 
         URL[] netty = nettyOf(jarFile);
         if (netty.length == 0) {
@@ -184,7 +185,7 @@ public class NettyRig {
             return;
         }
 
-        check("declared " + API_ROOT, json.contains("\"profileApi\":\"" + API_ROOT + "\""));
+        check("declared its session endpoint", json.contains("\"session\":\"" + API_ROOT + "/sessionserver\""));
         check("left the rest of the document alone",
                 json.contains("\"version\"") && json.contains("\"players\""));
         if (failures != 0) System.out.println("  got: " + json);

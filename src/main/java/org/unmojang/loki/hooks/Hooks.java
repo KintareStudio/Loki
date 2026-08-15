@@ -181,7 +181,9 @@ public class Hooks {
                 new InvocationHandler() {
                     public Object invoke(Object proxy, Method method, Object[] args) {
                         String name = method.getName();
-                        if ("keyBitCount".equals(name) || "signatureBitCount".equals(name)) return 4096;
+                        if ("keyBitCount".equals(name) || "signatureBitCount".equals(name)) {
+                            return Integer.valueOf(ProfileKeys.keyBitCount(proxy, type));
+                        }
                         if ("hashCode".equals(name)) return System.identityHashCode(proxy);
                         if ("equals".equals(name)) return proxy == args[0];
                         if ("toString".equals(name)) return "LokiServicesKeyInfo(" + type + ")";

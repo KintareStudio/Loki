@@ -53,7 +53,12 @@ public class ProfileRedirectTest {
         final int port;
         final List<String> hits = Collections.synchronizedList(new ArrayList<String>());
 
-        Api(final String tag, final String prefix, final boolean withExtraProperty) throws IOException {
+        /**
+         * @param signingKey what its authlib-injector metadata declares
+         * @param endpointKey what its /publickeys serves, or null to publish none there
+         */
+        Api(final String tag, final String prefix, final boolean withExtraProperty,
+            final String signingKey, final String endpointKey) throws IOException {
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             port = server.getAddress().getPort();
             server.createContext("/", new HttpHandler() {
@@ -63,7 +68,14 @@ public class ProfileRedirectTest {
                     String body;
                     if (path.equals(prefix)) { // authlib-injector root
                         body = "{\"meta\":{\"serverName\":\"" + tag + "\"},"
-                                + "\"skinDomains\":[\"cdn-" + tag + ".example\"]}";
+                                + "\"skinDomains\":[\"cdn-" + tag + ".example\"],"
+                                + "\"signaturePublickeys\":[\"-----BEGIN PUBLIC KEY-----\\n"
+                                + signingKey + "\\n-----END PUBLIC KEY-----\"]}";
+                    } else if (path.equals(prefix + "/minecraftservices/publickeys")) {
+                        body = endpointKey == null
+                                ? "{\"profilePropertyKeys\":[],\"playerCertificateKeys\":[]}"
+                                : "{\"profilePropertyKeys\":[{\"publicKey\":\"" + endpointKey + "\"}],"
+                                        + "\"playerCertificateKeys\":[{\"publicKey\":\"" + endpointKey + "\"}]}";
                     } else if (path.startsWith(prefix + "/sessionserver/session/minecraft/profile/")) {
                         body = "{\"id\":\"abc\",\"name\":\"TestPlayer\",\"properties\":["
                                 + "{\"name\":\"textures\",\"value\":\"" + tag + "-textures\"}"
@@ -163,6 +175,25 @@ public class ProfileRedirectTest {
         }
     }
 
+    /** Asks the verifier ServicesKeyInfo.signature() hands out whether it accepts this signature. */
+    private static boolean verifiesCertificate(String signature, String value) throws Exception {
+        java.security.Signature verifier = org.unmojang.loki.hooks.ProfileKeys.certificateSignature("x");
+        verifier.update(value.getBytes("UTF-8"));
+        return verifier.verify(java.util.Base64.getDecoder().decode(signature));
+    }
+
+    private static String der(java.security.KeyPair key) {
+        return java.util.Base64.getEncoder().encodeToString(key.getPublic().getEncoded());
+    }
+
+    /** Signs a property value the way an API server would, so it can be checked against its keys. */
+    private static String signed(java.security.KeyPair key, String value) throws Exception {
+        java.security.Signature signer = java.security.Signature.getInstance("SHA1withRSA");
+        signer.initSign(key.getPrivate());
+        signer.update(value.getBytes("UTF-8"));
+        return java.util.Base64.getEncoder().encodeToString(signer.sign());
+    }
+
     private static String base64(String value) throws Exception {
         return java.util.Base64.getEncoder().encodeToString(value.getBytes("UTF-8"));
     }
@@ -175,6 +206,15 @@ public class ProfileRedirectTest {
         return "{\"version\":{\"name\":\"1.21.1\",\"protocol\":767},"
                 + "\"players\":{\"max\":20,\"online\":1},\"description\":\"test\""
                 + (declaration == null ? "" : ",\"loki\":{\"profileApi\":\"" + declaration + "\"}") + "}";
+    }
+
+    /** A server that names its endpoints instead of a root, which assumes nothing about its paths. */
+    private static String statusNamingEndpoints(String base) {
+        return "{\"version\":{\"name\":\"1.21.1\",\"protocol\":767},"
+                + "\"players\":{\"max\":20,\"online\":1},\"description\":\"test\",\"loki\":{"
+                + "\"session\":\"" + base + "/nothing/like/ali/sessions\","
+                + "\"services\":\"" + base + "/authlib-injector/minecraftservices\","
+                + "\"skinDomains\":[\"cdn-named.example\"]}}";
     }
 
     /**
@@ -227,6 +267,11 @@ public class ProfileRedirectTest {
 
     private static void ping(String host, int port) throws Exception {
         handshake(host, port, Protocol.STATE_STATUS);
+    }
+
+    /** The player quitting, being kicked, or the connection dropping: all one event to Netty. */
+    private static void disconnect(Object future) {
+        ((Fake.Future) future).channel().close();
     }
 
     private static String fetch(String url) throws Exception {
@@ -291,8 +336,18 @@ public class ProfileRedirectTest {
     }
 
     private static void run(String[] args) throws Exception {
-        Api primary = new Api("primary", "/ali", false);
-        Api declared = new Api("declared", "/authlib-injector", true);
+        // Two signing keys that share nothing, so which one a profile verifies against is visible
+        java.security.KeyPairGenerator generator = java.security.KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        java.security.KeyPair primaryKey = generator.generateKeyPair();
+        java.security.KeyPair declaredKey = generator.generateKeyPair();
+        // Declared only in the declared server's metadata, never at its endpoint, so which of the
+        // two sources was used is visible in which signature verifies
+        java.security.KeyPair metadataOnlyKey = generator.generateKeyPair();
+
+        Api primary = new Api("primary", "/ali", false, der(primaryKey), null);
+        Api declared = new Api("declared", "/authlib-injector", true,
+                der(metadataOnlyKey), der(declaredKey));
 
         // Must land before RequestInterceptor's static initialiser reads them
         System.setProperty("minecraft.api.env", "custom");
@@ -304,10 +359,10 @@ public class ProfileRedirectTest {
 
         McServer declaring = new McServer(status(declared.base() + "/authlib-injector"));
         McServer silent = new McServer(status(null));
-        McServer downgrading = new McServer(status("http://evil.example.com/authlib-injector"));
+        McServer cleartext = new McServer(status("http://cleartext.example/authlib-injector"));
         declaring.start();
         silent.start();
-        downgrading.start();
+        cleartext.start();
 
         prepareBootstrap(args[0]);
         RequestInterceptor.setURLFactory();
@@ -337,6 +392,12 @@ public class ProfileRedirectTest {
             refused = true;
         }
         check("refused when there is none, rather than decoding whatever was there", refused, null);
+
+        String someValue = "eyJ0aW1lc3RhbXAiOjF9";
+        String signedByDeclared = signed(declaredKey, someValue);
+        check("a key the client was not configured with does not verify anything yet",
+                !org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, signedByDeclared),
+                null);
 
         System.out.println();
         System.out.println("== pinging a server that declares a profile API ==");
@@ -381,6 +442,16 @@ public class ProfileRedirectTest {
                 primary.saw("/minecraft/profile") && !declared.saw("/minecraft/profile"), null);
 
         String domains = System.getProperty("Loki.texture_domains", "");
+        check("the declared server's signing key now verifies a profile property",
+                org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, signedByDeclared), null);
+        // And certificates too: the players on this server authenticated against its Yggdrasil, so
+        // their chat keys carry its signature rather than the configured server's
+        check("and a player certificate, since its Yggdrasil signed those as well",
+                verifiesCertificate(signedByDeclared, someValue), null);
+        check("its endpoint is preferred to its metadata, which knows no key types",
+                !org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue,
+                        signed(metadataOnlyKey, someValue)), null);
+
         check("declared skin domains merged into the allowlist",
                 domains.contains("cdn-primary.example") && domains.contains("cdn-declared.example"), domains);
         check("declared CDN passes the texture check",
@@ -393,6 +464,10 @@ public class ProfileRedirectTest {
         join("127.0.0.1", silent.port());
         ProfileRedirect.awaitDiscovery(8000L);
         check("override cleared", ProfileRedirect.sessionBase() == null, null);
+        check("and its signing key is not trusted any more either",
+                !org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, signedByDeclared),
+                null);
+        check("for certificates either", !verifiesCertificate(signedByDeclared, someValue), null);
         check("profile read back on the configured API server",
                 fetch(profileUrl).contains("primary-textures"), null);
 
@@ -404,11 +479,96 @@ public class ProfileRedirectTest {
                 && ProfileRedirect.sessionBase().startsWith(declared.base()), ProfileRedirect.sessionBase());
 
         System.out.println();
+        System.out.println("== a server naming its endpoints instead of a root ==");
+        McServer naming = new McServer(statusNamingEndpoints(declared.base()));
+        naming.start();
+        join("127.0.0.1", naming.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        check("the session endpoint is taken as named, whatever its path",
+                ProfileRedirect.sessionBase() != null
+                        && ProfileRedirect.sessionBase().endsWith("/nothing/like/ali/sessions"),
+                ProfileRedirect.sessionBase());
+        check("an endpoint it did not name is not redirected",
+                ProfileRedirect.accountBase() == null, ProfileRedirect.accountBase());
+        check("its keys are read from the services endpoint it named",
+                org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue,
+                        signed(declaredKey, someValue)), null);
+        check("and the skin domains it declared are trusted",
+                System.getProperty(ProfileRedirect.PROP_TEXTURE_DOMAINS, "").contains("cdn-named.example"),
+                System.getProperty(ProfileRedirect.PROP_TEXTURE_DOMAINS));
+
+        System.out.println();
+        System.out.println("== a server that says nothing about textures ==");
+        McServer quietAboutSkins = new McServer("{\"version\":{\"name\":\"1.21.1\",\"protocol\":767},"
+                + "\"players\":{\"max\":20,\"online\":1},\"description\":\"test\",\"loki\":{"
+                + "\"session\":\"" + declared.base() + "/authlib-injector/sessionserver\"}}");
+        quietAboutSkins.start();
+        join("127.0.0.1", quietAboutSkins.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        check("its CDN is not blocked for being unmentioned",
+                Hooks.isAllowedTextureDomain("https://never-heard-of-it.example/tex/1"), null);
+
+        System.out.println();
+        System.out.println("== back to the client's own list on leaving ==");
+        join("127.0.0.1", silent.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        check("the client's own domains are enforced again",
+                Hooks.isAllowedTextureDomain("https://cdn-primary.example/tex/1")
+                        && !Hooks.isAllowedTextureDomain("https://never-heard-of-it.example/tex/1"), null);
+        check("and a previous server's CDN does not linger",
+                !Hooks.isAllowedTextureDomain("https://cdn-named.example/tex/1"), null);
+
+        System.out.println();
+        System.out.println("== a client that would rather keep its list ==");
+        System.setProperty("Loki.strict_texture_domains", "true");
+        join("127.0.0.1", quietAboutSkins.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        check("the flag keeps it enforced even where a server said nothing",
+                !Hooks.isAllowedTextureDomain("https://never-heard-of-it.example/tex/1"), null);
+        System.clearProperty("Loki.strict_texture_domains");
+
+        System.out.println();
+        System.out.println("== disconnecting, rather than moving to another server ==");
+        Object connection = join("127.0.0.1", declaring.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        check("on the server, its API is in use", ProfileRedirect.sessionBase() != null, null);
+        check("and its key is trusted",
+                org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, signedByDeclared),
+                null);
+
+        disconnect(connection);
+        check("quitting to the menu gives the configured API back",
+                ProfileRedirect.sessionBase() == null, ProfileRedirect.sessionBase());
+        check("its signing key is not trusted from the menu",
+                !org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, signedByDeclared),
+                null);
+        check("nor is its CDN still allowed",
+                !Hooks.isAllowedTextureDomain("https://cdn-declared.example/tex/1"), null);
+        check("and the client's own domains are back",
+                Hooks.isAllowedTextureDomain("https://cdn-primary.example/tex/1"), null);
+
+        // The old connection is torn down after the new one is up more often than not, and a close
+        // that undoes the arrival it arrived after would leave the player on a server whose profiles
+        // the client has just stopped resolving.
+        Object leaving = join("127.0.0.1", silent.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        Object arriving = join("127.0.0.1", declaring.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        disconnect(leaving);
+        check("a late close from the server just left does not undo the new one",
+                ProfileRedirect.sessionBase() != null, ProfileRedirect.sessionBase());
+        disconnect(arriving);
+
+        System.out.println();
         System.out.println("== a server declaring a cleartext public API ==");
         System.setProperty("minecraft.api.session.host", "https://real.example.com/sessionserver");
-        join("127.0.0.1", downgrading.port());
+        join("127.0.0.1", cleartext.port());
         ProfileRedirect.awaitDiscovery(8000L);
-        check("cleartext downgrade refused", ProfileRedirect.sessionBase() == null, null);
+        // Honoured, as a configured cleartext API server is. What travels over it is profile reads,
+        // and a request carrying credentials is refused whatever the transport.
+        check("a cleartext declaration is taken as given", ProfileRedirect.sessionBase() != null
+                && ProfileRedirect.sessionBase().startsWith("http://cleartext.example"),
+                ProfileRedirect.sessionBase());
 
         primary.server.stop(0);
         declared.server.stop(0);

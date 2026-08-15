@@ -1,5 +1,7 @@
 package org.unmojang.loki.util;
 
+import org.unmojang.loki.util.logger.NilLogger;
+
 import java.net.HttpURLConnection;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -58,6 +60,7 @@ public class UuidBatcher {
     private final LinkedBlockingQueue<Request> queue = new LinkedBlockingQueue<Request>();
     private final ExecutorService fallbackPool;
     private volatile boolean batchBroken = false;
+    private static final NilLogger log = NilLogger.get("Loki");
 
     private final Object throttleLock = new Object();
     private long nextSingleTime = 0L;
@@ -130,6 +133,22 @@ public class UuidBatcher {
             return;
         } catch (Exception e) {
             if (e instanceof EndpointUnavailableException) batchBroken = true;
+            for (Request request : batch) submitSingle(request);
+            return;
+        }
+
+        if (resolved.isEmpty()) {
+            // A batch route that answers 200 with nothing is not saying these names do not exist.
+            // An API server may mirror the per-name route and not this one, or answer the empty
+            // list intermittently while the per-name route keeps working — both have been seen on
+            // a real server — and taking that as the answer turns every player on it into a failed
+            // lookup. So the route that does answer is asked to settle it.
+            //
+            // The batch route is not given up on for it. An empty answer is evidence about this
+            // call and not about the route forever, and abandoning batching for a whole session
+            // over one blip costs more than the one wasted call that retrying it costs. All the
+            // names being genuinely unknown looks the same from here and costs one lookup each,
+            // which is what an unknown name costs anyway.
             for (Request request : batch) submitSingle(request);
             return;
         }

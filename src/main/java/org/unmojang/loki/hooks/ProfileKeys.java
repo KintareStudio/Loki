@@ -7,6 +7,8 @@ import org.unmojang.loki.util.logger.NilLogger;
 
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.net.URL;
 import java.security.KeyFactory;
 import java.security.PublicKey;
@@ -156,19 +158,61 @@ public final class ProfileKeys {
     }
 
     /**
-     * The first published certificate key, for somewhere that can only hold one.
+     * Whether a player's key certificate was signed by any trusted certificate key.
      * <p>
-     * BungeeCord keeps Mojang's key in a static field and verifies player certificates against it,
-     * and there is no honest way to make a field hold a set. A proxy therefore trusts one key at a
-     * time and has to be restarted across a rotation, which is worth knowing but is still better
-     * than trusting Mojang's key for profiles Mojang never signed.
+     * This is what BungeeCord's {@code EncryptionUtil.check} does, done over a set. Its own version
+     * verifies against one static field, so a proxy could only ever trust a single key: no
+     * rotation, and no profile proxied from a fallback API server, which is signed by Mojang. The
+     * bytes signed are rebuilt here exactly as Mojang lays them out, since a signature check over
+     * nearly the right bytes is worth nothing.
      *
-     * @return null when the API server has published none, in which case a caller should keep
-     *         whatever key it already had
+     * @param playerPublicKey Bungee's PlayerPublicKey, read reflectively so Loki needs none of its
+     *                        types on the build path
+     * @param uuid            the player's UUID for the 1.19.1+ format, or null for 1.19.0's
      */
-    public static PublicKey firstCertificateKey(Object owner) {
-        List<PublicKey> keys = trusted(owner, refreshServerKeys().playerCertificate);
-        return keys.isEmpty() ? null : keys.get(0);
+    public static boolean isCertificateValid(Object playerPublicKey, Object uuid) {
+        try {
+            long expiry = ((Long) invoke(playerPublicKey, "getExpiry")).longValue();
+            byte[] declaredKey = (byte[]) invoke(playerPublicKey, "getKey");
+            byte[] signature = (byte[]) invoke(playerPublicKey, "getSignature");
+            if (declaredKey == null || signature == null) return false;
+
+            byte[] encoded = KeyFactory.getInstance("RSA")
+                    .generatePublic(new X509EncodedKeySpec(declaredKey)).getEncoded();
+            byte[] signed = uuid != null
+                    ? certificatePayload(uuid, expiry, encoded)
+                    : legacyCertificatePayload(expiry, encoded);
+
+            List<PublicKey> keys = trusted(playerPublicKey, refreshServerKeys().playerCertificate);
+            for (int i = 0; i < keys.size(); i++) {
+                if (verify(keys.get(i), signed, signature)) return true;
+            }
+            log.warn("Player key certificate matched none of the " + keys.size() + " trusted keys");
+            return false;
+        } catch (Throwable t) {
+            log.error("Could not check a player key certificate", t);
+            return false;
+        }
+    }
+
+    /** 1.19.1 and later: the UUID, the expiry and the key, big endian, back to back. */
+    private static byte[] certificatePayload(Object uuid, long expiry, byte[] encoded) throws Exception {
+        long most = ((Long) invoke(uuid, "getMostSignificantBits")).longValue();
+        long least = ((Long) invoke(uuid, "getLeastSignificantBits")).longValue();
+        ByteBuffer buffer = ByteBuffer.allocate(24 + encoded.length).order(ByteOrder.BIG_ENDIAN);
+        buffer.putLong(most).putLong(least).putLong(expiry).put(encoded);
+        return buffer.array();
+    }
+
+    /** 1.19.0: the expiry followed by the key as PEM, as ASCII. */
+    private static byte[] legacyCertificatePayload(long expiry, byte[] encoded) throws Exception {
+        String pem = expiry + "-----BEGIN RSA PUBLIC KEY-----\n"
+                + Base64.encodeMime(encoded) + "\n-----END RSA PUBLIC KEY-----\n";
+        return pem.getBytes("US-ASCII");
+    }
+
+    private static Object invoke(Object target, String method) throws Exception {
+        return target.getClass().getMethod(method).invoke(target);
     }
 
     /**
@@ -187,9 +231,17 @@ public final class ProfileKeys {
 
     private static boolean verify(PublicKey key, String value, byte[] signature) {
         try {
+            return verify(key, value.getBytes("UTF-8"), signature);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static boolean verify(PublicKey key, byte[] signed, byte[] signature) {
+        try {
             Signature verifier = Signature.getInstance(ALGORITHM);
             verifier.initVerify(key);
-            verifier.update(value.getBytes("UTF-8"));
+            verifier.update(signed);
             return verifier.verify(signature);
         } catch (Exception e) {
             return false; // wrong key, wrong algorithm for this key, or a corrupt signature

@@ -15,6 +15,38 @@ public class Base64 {
         base64Inv['_'] = 63;
     }
 
+    /** Line length java.util.Base64's MIME encoder uses, which is what the format below expects. */
+    private static final int MIME_LINE = 76;
+
+    /**
+     * Encodes the way {@code Base64.getMimeEncoder()} does: 76 character lines separated by CRLF.
+     * <p>
+     * Written out rather than called because the agent targets Java 5, where that encoder does not
+     * exist yet. It is needed to rebuild the string Mojang signs over a 1.19.0 player key, byte for
+     * byte, since a signature check is worth nothing if the bytes are nearly right.
+     */
+    public static String encodeMime(byte[] data) {
+        StringBuilder out = new StringBuilder();
+        int lineLength = 0;
+        for (int i = 0; i < data.length; i += 3) {
+            int remaining = data.length - i;
+            int chunk = (data[i] & 0xFF) << 16
+                    | (remaining > 1 ? (data[i + 1] & 0xFF) << 8 : 0)
+                    | (remaining > 2 ? (data[i + 2] & 0xFF) : 0);
+
+            if (lineLength == MIME_LINE) {
+                out.append("\r\n");
+                lineLength = 0;
+            }
+            out.append(base64Chars[(chunk >> 18) & 0x3F]);
+            out.append(base64Chars[(chunk >> 12) & 0x3F]);
+            out.append(remaining > 1 ? base64Chars[(chunk >> 6) & 0x3F] : '=');
+            out.append(remaining > 2 ? base64Chars[chunk & 0x3F] : '=');
+            lineLength += 4;
+        }
+        return out.toString();
+    }
+
     public static byte[] decode(String s) {
         s = s.replaceAll("\\s", "");
         int len = s.length();

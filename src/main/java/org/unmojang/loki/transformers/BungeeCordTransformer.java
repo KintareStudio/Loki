@@ -9,6 +9,10 @@ import org.unmojang.loki.LokiUtil;
 import java.util.Arrays;
 
 public class BungeeCordTransformer extends LokiTransformer {
+    private static final String CERTIFICATE_CHECK_OWNER = "net/md_5/bungee/EncryptionUtil";
+    private static final String CERTIFICATE_CHECK_DESC =
+            "(Lnet/md_5/bungee/protocol/data/PlayerPublicKey;Ljava/util/UUID;)Z";
+
 
     protected boolean matches(String className) {
         return className.startsWith("net/md_5/bungee/");
@@ -21,26 +25,29 @@ public class BungeeCordTransformer extends LokiTransformer {
     protected boolean patch(ClassNode cn, String className) {
         boolean changed = false;
 
-        if ("net/md_5/bungee/EncryptionUtil".equals(className)) {
+        // The certificate check, rewritten rather than pointed at a different key. Its own version
+        // verifies against one static field, so a proxy could only trust one key at a time: no
+        // rotation, and nothing signed by Mojang for a fallback API server. Loki writes the body,
+        // so it can try the whole published set, and the field it used to overwrite goes unread.
+        if (CERTIFICATE_CHECK_OWNER.equals(className) && Loki.enforce_secure_profile) {
             for (MethodNode mn : cn.methods) {
-                if ("<clinit>".equals(mn.name)) {
-                    AbstractInsnNode ret = null;
-                    for (AbstractInsnNode insn : mn.instructions.toArray())
-                        if (insn.getOpcode() == Opcodes.RETURN) ret = insn;
-                    if (ret != null) {
-                        InsnList patch = new InsnList();
-                        patch.add(new LdcInsnNode(Type.getType("Lnet/md_5/bungee/EncryptionUtil;")));
-                        patch.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
-                                "org/unmojang/loki/hooks/Hooks",
-                                "replaceBungeeCordMojangKey",
-                                "(Ljava/lang/Class;)V",
-                                false));
-                        mn.instructions.insertBefore(ret, patch);
-                        Loki.log.debug("Patching " + LokiUtil.getFqmn(className, mn.name, mn.desc));
-                        changed = true;
-                    }
-                    break;
-                }
+                if (!"check".equals(mn.name) || !CERTIFICATE_CHECK_DESC.equals(mn.desc)) continue;
+
+                mn.instructions.clear();
+                mn.tryCatchBlocks.clear();
+                if (mn.localVariables != null) mn.localVariables.clear();
+
+                mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0)); // the player's key
+                mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1)); // their uuid, null pre 1.19.1
+                mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
+                        "org/unmojang/loki/hooks/ProfileKeys",
+                        "isCertificateValid",
+                        "(Ljava/lang/Object;Ljava/lang/Object;)Z",
+                        false));
+                mn.instructions.add(new InsnNode(Opcodes.IRETURN));
+
+                Loki.log.debug("Patching " + LokiUtil.getFqmn(className, mn.name, mn.desc));
+                changed = true;
             }
         }
 

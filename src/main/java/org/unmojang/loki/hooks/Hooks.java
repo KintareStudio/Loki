@@ -5,7 +5,6 @@ import org.unmojang.loki.util.HttpUtil;
 import org.unmojang.loki.util.Json;
 import org.unmojang.loki.util.UuidBatcher;
 import org.unmojang.loki.util.logger.NilLogger;
-import sun.misc.Unsafe;
 
 import java.io.*;
 import java.lang.reflect.Constructor;
@@ -340,72 +339,6 @@ public class Hooks {
         };
         try { sig.initVerify((PublicKey)null); } catch (InvalidKeyException e) { throw new RuntimeException(e); }
         return sig;
-    }
-
-    private static void replaceStaticField(Class<?> owner, String fieldName, Object value) throws Exception {
-        Field field = owner.getDeclaredField(fieldName);
-        field.setAccessible(true);
-
-        Field unsafeField = Unsafe.class.getDeclaredField("theUnsafe");
-        unsafeField.setAccessible(true);
-        Unsafe unsafe = (Unsafe) unsafeField.get(null);
-
-        Object staticBase = unsafe.staticFieldBase(field);
-        long staticOffset = unsafe.staticFieldOffset(field);
-        unsafe.putObject(staticBase, staticOffset, value);
-    }
-
-    /**
-     * Points BungeeCord's player certificate check at the API server's key.
-     * <p>
-     * A certificate key, not a profile property one: this field is read by the check that says a
-     * player's chat key really is theirs. Only the first, since a static field holds one key and no
-     * amount of wishing makes it hold a set.
-     * <p>
-     * Failing here used to throw out of a static initialiser, which is a proxy refusing to start
-     * because an API server was briefly unreachable. Now it keeps Mojang's key and says so: a
-     * proxy that is up and trusting the wrong key is worth more than one that is not up.
-     */
-    public static void replaceBungeeCordMojangKey(Class<?> encUtilClass) {
-        try {
-            PublicKey key = ProfileKeys.firstCertificateKey(encUtilClass);
-            if (key == null) {
-                log.warn("No certificate key published, BungeeCord keeps Mojang's");
-                return;
-            }
-            log.debug("Replacing Mojang public key in BungeeCord");
-            replaceStaticField(encUtilClass, "MOJANG_KEY", key);
-        } catch (Throwable t) {
-            log.error("Could not replace BungeeCord's public key, it keeps Mojang's", t);
-        }
-    }
-
-    private static PublicKey getPublicKey() throws IOException, NoSuchAlgorithmException, InvalidKeySpecException {
-        String baseUrl = System.getProperty("minecraft.api.services.host", "https://api.minecraftservices.com");
-        URL url = new URL(baseUrl + "/publickeys");
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("GET");
-        conn.setDoInput(true);
-        conn.setConnectTimeout(5000);
-        conn.setReadTimeout(5000);
-        if (conn.getResponseCode() != 200) {
-            throw new IOException("publickeys endpoint returned HTTP " + conn.getResponseCode());
-        }
-
-        Json.JSONObject jsonObject = new Json.JSONObject(HttpUtil.readStream(conn.getInputStream()));
-        Json.JSONArray profilePropertyKeys = jsonObject.getJSONArray("profilePropertyKeys");
-        if (profilePropertyKeys == null || profilePropertyKeys.isEmpty()) {
-            throw new IllegalStateException("profilePropertyKeys not found in response");
-        }
-        Object keyElement = profilePropertyKeys.getJSONObject(0).get("publicKey");
-        if (keyElement == null) {
-            throw new IllegalStateException("publicKey not found in response");
-        }
-
-        byte[] keyBytes = Base64.decode(keyElement.toString());
-        X509EncodedKeySpec spec = new X509EncodedKeySpec(keyBytes);
-        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
-        return keyFactory.generatePublic(spec);
     }
 
     public static String getMpPass(Object applet) {

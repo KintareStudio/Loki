@@ -27,7 +27,7 @@ package org.unmojang.loki.legacy;
  */
 public final class LegacyProtocol {
     /** Player and Server Identification alike. */
-    public static final int CLASSIC_IDENTIFICATION = 0x00;
+    public static final byte CLASSIC_IDENTIFICATION = 0x00;
     /** id + version + 64 + 64 + one trailing byte. */
     public static final int CLASSIC_IDENTIFICATION_BYTES = 131;
     /** The trailing byte of the client's identification, which vanilla servers ignore. */

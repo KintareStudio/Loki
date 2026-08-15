@@ -52,18 +52,21 @@ public final class LegacyStreams {
      * exactly what it did with the zero that was there before.
      */
     public static OutputStream mark(OutputStream out, final int prefixBytes, final int offset,
-                                    final byte marker) {
+                                    final byte marker, final byte firstByte) {
         return new FilterOutputStream(out) {
             private int seen;
+            private boolean applicable = true;
 
             public void write(int b) throws IOException {
-                if (seen == offset) b = marker;
+                if (seen == 0 && (byte) b != firstByte) applicable = false;
+                if (applicable && seen == offset) b = marker;
                 if (seen < prefixBytes) seen++;
                 out.write(b);
             }
 
             public void write(byte[] bytes, int at, int length) throws IOException {
-                if (seen < prefixBytes && offset >= seen && offset < seen + length) {
+                if (seen == 0 && length > 0 && bytes[at] != firstByte) applicable = false;
+                if (applicable && seen < prefixBytes && offset >= seen && offset < seen + length) {
                     byte[] copy = new byte[length];
                     System.arraycopy(bytes, at, copy, 0, length);
                     copy[offset - seen] = marker;
@@ -83,14 +86,16 @@ public final class LegacyStreams {
      * has ignored it since Classic.
      */
     public static InputStream watchForMark(InputStream in, final int offset, final byte marker,
-                                           final Marked marked) {
+                                           final byte firstByte, final Marked marked) {
         return new FilterInputStream(in) {
             private int seen;
+            private boolean applicable = true;
 
             public int read() throws IOException {
                 int b = in.read();
                 if (b >= 0) {
-                    if (seen == offset && (byte) b == marker) marked.mark();
+                    if (seen == 0 && (byte) b != firstByte) applicable = false;
+                    if (applicable && seen == offset && (byte) b == marker) marked.mark();
                     seen++;
                 }
                 return b;
@@ -99,7 +104,8 @@ public final class LegacyStreams {
             public int read(byte[] bytes, int at, int length) throws IOException {
                 int read = in.read(bytes, at, length);
                 if (read > 0) {
-                    if (offset >= seen && offset < seen + read
+                    if (seen == 0 && bytes[at] != firstByte) applicable = false;
+                    if (applicable && offset >= seen && offset < seen + read
                             && bytes[at + offset - seen] == marker) {
                         marked.mark();
                     }
@@ -115,12 +121,15 @@ public final class LegacyStreams {
      * only to a client that marked itself.
      */
     public static OutputStream appendAfter(OutputStream out, final int prefixBytes,
-                                           final Source source, final Marked marked) {
+                                           final byte firstByte, final Source source,
+                                           final Marked marked) {
         return new FilterOutputStream(out) {
             private int seen;
             private boolean appended;
+            private boolean applicable = true;
 
             public void write(int b) throws IOException {
+                if (seen == 0 && (byte) b != firstByte) applicable = false;
                 out.write(b);
                 seen++;
                 appendIfDue();
@@ -132,7 +141,8 @@ public final class LegacyStreams {
              * server is under no obligation to write one packet per call.
              */
             public void write(byte[] bytes, int at, int length) throws IOException {
-                if (!appended && seen < prefixBytes && seen + length > prefixBytes) {
+                if (seen == 0 && length > 0 && bytes[at] != firstByte) applicable = false;
+                if (applicable && !appended && seen < prefixBytes && seen + length > prefixBytes) {
                     int upToBoundary = prefixBytes - seen;
                     out.write(bytes, at, upToBoundary);
                     seen += upToBoundary;
@@ -147,7 +157,7 @@ public final class LegacyStreams {
             }
 
             private void appendIfDue() throws IOException {
-                if (appended || seen < prefixBytes || !marked.isMarked()) return;
+                if (!applicable || appended || seen < prefixBytes || !marked.isMarked()) return;
                 appended = true; // set first: a failure here must not be retried on every write
                 byte[] block = LegacyProtocol.payload(source.declaration());
                 if (block != null) out.write(block);
@@ -162,7 +172,8 @@ public final class LegacyStreams {
      * The block can only be at one place, right after the identification packet, so this reads that
      * far, decides once, and then stops looking. Anything it cannot make sense of is passed on.
      */
-    public static InputStream stripAfter(InputStream source, final int prefixBytes, final Sink sink) {
+    public static InputStream stripAfter(InputStream source, final int prefixBytes,
+                                         final byte firstByte, final Sink sink) {
         // Buffered because deciding requires reading ahead and putting back what turned out not to
         // be ours, and a socket's own stream cannot be put back into.
         InputStream in = new BufferedInputStream(source,
@@ -170,6 +181,7 @@ public final class LegacyStreams {
         return new FilterInputStream(in) {
             private int seen;
             private boolean decided;
+            private boolean applicable = true;
 
             public int read() throws IOException {
                 byte[] one = new byte[1];
@@ -178,11 +190,17 @@ public final class LegacyStreams {
             }
 
             public int read(byte[] bytes, int at, int length) throws IOException {
-                if (!decided && seen >= prefixBytes) removeBlock();
+                if (applicable && !decided && seen >= prefixBytes) removeBlock();
 
-                int room = decided || seen >= prefixBytes ? length : Math.min(length, prefixBytes - seen);
+                int room = !applicable || decided || seen >= prefixBytes
+                        ? length
+                        : Math.min(length, prefixBytes - seen);
                 int read = in.read(bytes, at, room);
-                if (read > 0) seen += read;
+                if (read > 0) {
+                    // Not the protocol this filter knows, so step aside and never look again
+                    if (seen == 0 && bytes[at] != firstByte) applicable = false;
+                    seen += read;
+                }
                 return read;
             }
 

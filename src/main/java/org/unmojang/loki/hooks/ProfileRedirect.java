@@ -157,6 +157,35 @@ public final class ProfileRedirect {
         log.debug("Left " + peer + ", back to the configured profile API");
     }
 
+    /**
+     * The same arrival, for the versions where it comes in on the connection instead of in a ping.
+     * <p>
+     * Before 1.7 there is no status JSON to read, so the server sends its API root on the game
+     * connection itself and Loki takes it back off before the game sees it. What arrives is a root
+     * rather than a set of endpoints, for the same reason {@code profileApi} exists: there is no
+     * room down there to name three, and expanding one is something this already knows how to do.
+     *
+     * @param root what the server declared, an authlib-injector root or a bare host
+     */
+    public static void noteDeclaredRoot(String host, int port, String root) {
+        if (disabled()) return;
+        String canonical = canonicalize(root);
+        if (canonical == null) return;
+
+        String peer = host + ":" + port;
+        Discovery discovery = new Discovery();
+        discovery.root = canonical;
+        discovery.session = canonical + "/sessionserver";
+        discovery.account = canonical + "/api";
+        discovery.services = canonical + "/minecraftservices";
+        discovery.done.countDown();
+
+        discoveries.put(peer, discovery);
+        System.setProperty(PROP_PEER, peer);
+        publishIfCurrent(peer, discovery);
+        ProfileKeys.warmDeclared();
+    }
+
     private static String hostOf(InetSocketAddress address) {
         try { // getHostString is Java 7+, and unlike getHostName it never triggers a reverse lookup
             return (String) InetSocketAddress.class.getMethod("getHostString").invoke(address);

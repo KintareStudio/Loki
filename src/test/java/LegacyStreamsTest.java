@@ -102,7 +102,8 @@ public class LegacyStreamsTest {
             // ---- the client marks itself, and the packet keeps its shape
             ByteArrayOutputStream raw = new ByteArrayOutputStream();
             OutputStream marking = LegacyStreams.mark(raw, IDENTIFICATION,
-                    LegacyProtocol.CLASSIC_MARKER_OFFSET, LegacyProtocol.MARKER);
+                    LegacyProtocol.CLASSIC_MARKER_OFFSET, LegacyProtocol.MARKER,
+                    LegacyProtocol.CLASSIC_IDENTIFICATION);
             byte[] clientPackets = concat(identification(), nextPacket());
             writeAll(marking, clientPackets, chunk);
 
@@ -119,13 +120,14 @@ public class LegacyStreamsTest {
             LegacyStreams.Marked flag = new LegacyStreams.Marked();
             byte[] seenByServer = readAll(LegacyStreams.watchForMark(
                     new ByteArrayInputStream(marked), LegacyProtocol.CLASSIC_MARKER_OFFSET,
-                    LegacyProtocol.MARKER, flag), chunk);
+                    LegacyProtocol.MARKER, LegacyProtocol.CLASSIC_IDENTIFICATION, flag), chunk);
             check("the server sees the mark", flag.isMarked(), null);
             check("and reads the bytes exactly as they arrived", same(marked, seenByServer), null);
 
             // ---- the server answers, appending the block
             ByteArrayOutputStream wire = new ByteArrayOutputStream();
             OutputStream appending = LegacyStreams.appendAfter(wire, IDENTIFICATION,
+                    LegacyProtocol.CLASSIC_IDENTIFICATION,
                     new LegacyStreams.Source() {
                         public String declaration() {
                             return API;
@@ -140,8 +142,8 @@ public class LegacyStreamsTest {
 
             // ---- and the client takes it back out
             Recorder recorder = new Recorder();
-            byte[] seenByGame = readAll(LegacyStreams.stripAfter(
-                    new ByteArrayInputStream(wire.toByteArray()), IDENTIFICATION, recorder), chunk);
+            byte[] seenByGame = readAll(LegacyStreams.stripAfter(new ByteArrayInputStream(wire.toByteArray()), IDENTIFICATION,
+                    LegacyProtocol.CLASSIC_IDENTIFICATION, recorder), chunk);
             check("the game reads what a plain server would have sent",
                     same(concat(identification(), nextPacket()), seenByGame),
                     seenByGame.length + " bytes");
@@ -152,6 +154,7 @@ public class LegacyStreamsTest {
             LegacyStreams.Marked unmarked = new LegacyStreams.Marked();
             ByteArrayOutputStream plainWire = new ByteArrayOutputStream();
             writeAll(LegacyStreams.appendAfter(plainWire, IDENTIFICATION,
+                    LegacyProtocol.CLASSIC_IDENTIFICATION,
                     new LegacyStreams.Source() {
                         public String declaration() {
                             return API;
@@ -162,13 +165,36 @@ public class LegacyStreamsTest {
 
             // ---- and a server that declared nothing leaves the client alone
             Recorder quiet = new Recorder();
-            byte[] fromPlainServer = readAll(LegacyStreams.stripAfter(
-                    new ByteArrayInputStream(concat(identification(), nextPacket())),
-                    IDENTIFICATION, quiet), chunk);
+            byte[] fromPlainServer = readAll(LegacyStreams.stripAfter(new ByteArrayInputStream(concat(identification(), nextPacket())),
+                    IDENTIFICATION, LegacyProtocol.CLASSIC_IDENTIFICATION, quiet), chunk);
             check("a plain server's bytes reach the game unchanged",
                     same(concat(identification(), nextPacket()), fromPlainServer), null);
             check("and nothing is reported as declared", quiet.declaration == null,
                     quiet.declaration);
+        }
+
+        // These filters are installed on java.net.Socket, so every socket in the process meets them
+        // — an HTTP request Loki itself makes as much as a game connection. The byte the marker
+        // would go in is somewhere in the middle of a request body, and overwriting it there is the
+        // worst thing this design could do.
+        System.out.println();
+        System.out.println("== a socket that is not a game connection at all ==");
+        StringBuilder request = new StringBuilder("GET /session/minecraft/profile HTTP/1.1\r\n");
+        while (request.length() < 400) request.append("X-Padding: aaaaaaaaaaaaaaaaaaaa\r\n");
+        byte[] http = request.toString().getBytes("UTF-8");
+
+        for (int c = 0; c < chunks.length; c++) {
+            ByteArrayOutputStream sent = new ByteArrayOutputStream();
+            writeAll(LegacyStreams.mark(sent, IDENTIFICATION, LegacyProtocol.CLASSIC_MARKER_OFFSET,
+                    LegacyProtocol.MARKER, LegacyProtocol.CLASSIC_IDENTIFICATION), http, chunks[c]);
+            check("an HTTP request goes out byte for byte, at " + chunks[c] + " at a time",
+                    same(http, sent.toByteArray()), null);
+
+            Recorder none = new Recorder();
+            byte[] received = readAll(LegacyStreams.stripAfter(new ByteArrayInputStream(http),
+                    IDENTIFICATION, LegacyProtocol.CLASSIC_IDENTIFICATION, none), chunks[c]);
+            check("and a reply comes back byte for byte", same(http, received), null);
+            check("with nothing taken for a declaration", none.declaration == null, none.declaration);
         }
 
         System.out.println();

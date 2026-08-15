@@ -94,6 +94,11 @@ public class Loki {
         LokiUtil.addRetransformTransformer(new InetAddressTransformer(), inst);
         LokiUtil.retransformClass("java.net.InetAddress", inst);
 
+        // The pre-1.7 announcement, which has no Netty to hang off and lives on the socket instead
+        LokiUtil.addRetransformTransformer(new SocketStreamTransformer(), inst);
+        LokiUtil.retransformClass("java.net.Socket", inst);
+        LokiUtil.retransformClass("java.net.ServerSocket", inst);
+
         // Apply 1.21.9+ fixes
         LokiUtil.apply1_21_9Fixes();
     }

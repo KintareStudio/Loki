@@ -150,6 +150,7 @@ Where the mark goes depends on the version, and there are more shapes down there
 
 | Versions | Protocol | Where the mark goes |
 |---|---|---|
+| Classic | 7 | the trailing byte of Player Identification, which is unused |
 | a1.0.11 – a1.1.2_01 | 10 – 14, then 1 – 2 | the password field, which is a constant nothing reads |
 | a1.2.0 – b1.4_01 | 3 – 10 | the map seed in the login packet, behind the password string |
 | b1.5 – 1.1 | 11 – 23 | the map seed, straight after the username |
@@ -180,8 +181,16 @@ a proxy does read the host:
 -DLoki.no_legacy_handshake_marker=true
 ```
 
-Classic is the one era not covered: it does not use `java.net.Socket`, so none of these filters are
-anywhere near it.
+Classic is the one era that never asks a socket for its streams — both ends of it are non-blocking
+NIO — so it is hooked on the channel instead. Its Player Identification is 131 bytes and the last of
+them is unused, which is where CPE has announced extended clients for years; Loki does not use CPE's
+own `0x42` there, since that claims to speak a protocol it does not implement. The block comes back
+in front of everything the server sends rather than after its identification, because on Classic the
+client speaks first and the server has therefore read the marker before it writes a byte.
+
+The block goes in front from 1.3 as well, and for the same reason. Everything between those two ends
+of the range has it after the server's first packet, which is as early as the marker can be known
+there.
 
 Leaving restores, the same as on 1.7 and up. Nothing down here tells the game a visit is over, so the
 end of the connection stands in for it — the stream ending, the stream closing, or the socket being

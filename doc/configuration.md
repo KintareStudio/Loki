@@ -55,6 +55,18 @@ Loki supports JVM arguments to enable or disable some behaviour.
   -DLoki.disable_profile_advertise=true
   ```
 
+- Turn off the pre-1.7 announcement, which carries the same declaration on the game connection
+  because those versions have no status response to put it in [^3]
+  ```
+  -DLoki.disable_legacy_announce=true
+  ```
+
+- Keep the marker off the handshake on 1.3 to 1.6.4, where it rides on the end of the host. Only a
+  proxy reads that field; a server of those versions drops it [^3]
+  ```
+  -DLoki.no_legacy_handshake_marker=true
+  ```
+
 - Re-enable patchy (server blocking)
   ```
   -DLoki.enable_patchy=true

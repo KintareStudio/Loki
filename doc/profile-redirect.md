@@ -125,8 +125,59 @@ Loki does the ping itself rather than reading the game's. Vanilla clients are ob
 classes that model a status response are renamed every version, whereas the status handshake has
 been unchanged since 1.7. That is what keeps this version agnostic without a mapping database.
 
-Requires 1.7 or later, since the hook is Netty's `Bootstrap`. Older clients ignore the feature and
-keep using their configured API server for everything.
+The ping hook is Netty's `Bootstrap`, so it covers 1.7 and later. Below that there is no ping to
+read and the declaration travels on the game connection itself — see the next section.
+
+## Before 1.7
+
+There is no status response to put anything in until 1.7, so the same declaration is carried on the
+connection instead, in the same format and ending up in the same place. It works in both directions
+against unmodified software, and has been tested against the real client and the real server of each
+era rather than reasoned about.
+
+Two things happen, and both fail towards doing nothing:
+
+1. **The client marks itself**, in a field its own packets already carry and nothing reads. It never
+   makes a packet longer than it was, except in one case where the field is a counted string and the
+   count is updated with it. A server without Loki reads the field and ignores it, exactly as it
+   ignored what was there before.
+2. **The server answers with a block** — `0xFE 'L' 'O' 'K'`, a length, and the declaration as UTF-8 —
+   and only to a client that marked itself. The client takes it back out before the game reads a byte
+   of it, so the game sees a protocol that has not changed. A client without Loki never marks itself,
+   is never sent a block, and cannot tell the difference.
+
+Where the mark goes depends on the version, and there are more shapes down there than eras:
+
+| Versions | Protocol | Where the mark goes |
+|---|---|---|
+| a1.2.0 – b1.4_01 | 3 – 10 | the map seed in the login packet, behind the password string |
+| b1.5 – 1.1 | 11 – 23 | the map seed, straight after the username |
+| 1.2.1 – 1.2.5 | 28 – 29 | the two zero ints behind the level type |
+| 1.3 – 1.6.4 | 39+ | the end of the host in the handshake |
+
+A client sends the seed as zero because it has no seed to send, which is what makes those eight bytes
+free; Loki writes there only if it finds zeros, so a packet shaped differently costs a declaration
+rather than the login. From 1.3 the login packet has no username at all, and the mark moves to the
+host — the address the client says it dialled, which the server already knows and drops. That is the
+field Forge has appended `\0FML\0` to since the same release. It is also the only part of this a
+proxy can see, since a proxy does read the host:
+
+```
+-DLoki.no_legacy_handshake_marker=true
+```
+
+Below a1.2.0 the login packet ends after the password and there is nothing spare in it, so those
+versions are left alone. Classic is not covered yet either: it does not use `java.net.Socket`.
+
+Leaving restores, the same as on 1.7 and up. Nothing down here tells the game a visit is over, so the
+end of the connection stands in for it — the stream ending, the stream closing, or the socket being
+closed, which from 1.3 is the usual one.
+
+```
+-DLoki.disable_legacy_announce=true
+```
+
+turns the whole pre-1.7 path off, in both directions.
 
 ## What is redirected
 
@@ -221,10 +272,28 @@ which publishes several signing keys and signs with the last of them.
 Tokens are optional and go through the environment rather than the command line. Without one, the
 check that a client's own token still reaches its own API server is skipped and the rest runs.
 
+```
+scripts/legacy-matrix.sh a1.2.6 b1.7.3 1.2.5 1.6.4
+```
+Below 1.7, where the only thing worth testing is the real thing. Each version is run twice against
+its own server — once with a vanilla client, once with a Loki one — and the login is a real
+authenticated one, with the API server on the other end checking the token rather than agreeing with
+whatever it is sent. Four things have to hold every time: the player gets in with Loki, the player
+gets in without it, only the Loki client is told anything, and the override is gone once the
+connection is. With no arguments it runs the versions that have an archived server.
+
+```
+scripts/login-probe.sh
+```
+What each version's client actually puts on the wire, which is where the table above comes from. It
+answers a handshake and dumps the login packet without interpreting it; run it if a version ever
+turns out to be shaped differently than the table says.
+
 ## Turning it off
 
 ```
 -DLoki.disable_profile_redirect=true
 ```
 
-Server declarations are then ignored entirely, and the Netty hook is not installed at all.
+Server declarations are then ignored entirely, and the Netty hook is not installed at all. Below 1.7
+the connection path is separate, and `-DLoki.disable_legacy_announce=true` turns that one off.

@@ -102,6 +102,15 @@ if [ -n "${LOKI_AGENT_ARG+set}" ]; then
 fi
 
 echo "  $version -> $host:$port as $username${agent:+ (with Loki)}"
+
+# Classic keeps its applet somewhere else, and it is the one era whose class name does not start
+# with net.minecraft. Asked of the jar rather than decided by version, same as everything else here.
+applet=net.minecraft.client.MinecraftApplet
+if "$jdk/bin/jar" tf "$(topath "$work/client.jar")" 2>/dev/null \
+        | grep -q "^com/mojang/minecraft/MinecraftApplet.class$"; then
+    applet=com.mojang.minecraft.MinecraftApplet
+fi
+
 cd "$work/game"
 
 # 1.6 dropped the applet — that is the release the launcher was rewritten for — and replaced it
@@ -141,4 +150,5 @@ fi
 "$jdk/bin/java" $agent $LOKI_CLIENT_JVM_ARGS \
     "-Djava.library.path=$(topath "$work/natives")" \
     -Dloki.seconds="${LOKI_CLIENT_SECONDS:-40}" \
+    -Dloki.applet="$applet" \
     -cp "$classpath" AppletHost "$username" "$session" "$host" "$port"

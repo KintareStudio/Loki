@@ -29,7 +29,11 @@ public class AppletHost {
         parameters.put("sessionid", args.length > 1 ? args[1] : "0");
         if (args.length > 2) parameters.put("server", args[2]);
         if (args.length > 3) parameters.put("port", args[3]);
-        if (args.length > 4) parameters.put("mppass", args[4]);
+        // Classic asks for two more than the versions after it, and takes null for neither: the
+        // mppass goes in the 64-byte key field of its identification, and haspaid decides whether
+        // it even offers to connect. A server with verify-names off accepts any mppass.
+        parameters.put("mppass", args.length > 4 ? args[4] : "0");
+        parameters.put("haspaid", "true");
         parameters.put("stand-alone", "true");
         parameters.put("demo", "false");
         parameters.put("fullscreen", "false");

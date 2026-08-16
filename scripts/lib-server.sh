@@ -107,7 +107,8 @@ loki_legacy_server_url() {
         b1.8)   echo "https://files.betacraft.uk/server-archive/beta/b1.8.jar" ;;
         b1.7.3) echo "https://files.betacraft.uk/server-archive/beta/b1.7.3.jar" ;;
         a0.2.8) echo "https://files.betacraft.uk/server-archive/alpha/a0.2.8.jar" ;;
-        c1.10)  echo "https://files.betacraft.uk/server-archive/classic/c1.10.jar" ;;
+        c1.10|c0.30_01c)
+                echo "https://files.betacraft.uk/server-archive/classic/c1.10.jar" ;;
         *)      echo "" ;;
     esac
 }
@@ -189,7 +190,15 @@ loki_start_server() {
     # which the next run then fails to start on.
     loki_previous_dir=$(pwd)
     cd "$work" || return 1
-    "$loki_java_bin" -Xmx1G $LOKI_TEST_JVM_ARGS "$@" -jar server.jar nogui > "$work/$label.log" 2>&1 &
+    # A Classic server has no main class in its manifest and no nogui to give it, so it is started
+    # by name. Asked of the jar rather than decided by version id, like everything else here.
+    loki_entry="-jar server.jar nogui"
+    if "$loki_java_home/bin/jar" tf "$(topath "$work/server.jar")" 2>/dev/null \
+            | grep -q "^com/mojang/minecraft/server/MinecraftServer.class$"; then
+        loki_entry="-cp server.jar com.mojang.minecraft.server.MinecraftServer"
+    fi
+
+    "$loki_java_bin" -Xmx1G $LOKI_TEST_JVM_ARGS "$@" $loki_entry > "$work/$label.log" 2>&1 &
     loki_server_pid=$!
     cd "$loki_previous_dir" || return 1
 
@@ -211,8 +220,9 @@ loki_start_server() {
             return 1
         fi
         # "Done (1.234s)!" from Beta on, and a bare "Done!" in Alpha. Both are followed by the same
-        # offer of help, which is the part that has not changed since a0.1.0.
-        if grep -q 'For help, type' "$work/$label.log" 2>/dev/null; then
+        # offer of help, which is the part that has not changed since a0.1.0. Classic says neither,
+        # and announces the port it is listening on instead.
+        if grep -qE 'For help, type|Now accepting input on' "$work/$label.log" 2>/dev/null; then
             return 0
         fi
         sleep 2

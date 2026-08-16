@@ -90,7 +90,10 @@ public final class LoginProbe {
                 // One packet is all this needs, and the client sends nothing else until it is
                 // answered, so a short pause after the first bytes means it has finished.
                 if (read >= 8 && in.available() == 0) {
-                    Thread.sleep(300);
+                    // Generous, because a client does not have to write a packet in one go: Classic
+                    // sends its identification as the two strings it is made of, and stopping
+                    // between them would report half of it as the whole thing.
+                    Thread.sleep(1500);
                     if (in.available() == 0) break;
                 }
             }

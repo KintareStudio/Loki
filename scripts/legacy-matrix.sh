@@ -98,9 +98,22 @@ for version in $versions; do
             online=false
         fi
 
-        printf 'server-port=%s\nonline-mode=%s\nlevel-name=w\nmax-players=4\n' "$port" "$online" \
-            > "$dir/server.properties"
-        loki_start_server "$dir" server "-javaagent:$(topath "$loki_agent_jar")=$api" \
+        # Classic shares none of these key names — the port is "port", online mode is
+        # "verify-names" — and it heartbeats to a website that no longer exists unless told not to.
+        if [ -f "$dir/server.jar" ] && "$jdk/bin/jar" tf "$(topath "$dir/server.jar")" 2>/dev/null \
+                | grep -q "^com/mojang/minecraft/server/MinecraftServer.class$"; then
+            # Name verification stays off in both passes here, unlike every other era. Classic does
+            # not authenticate against a session server at all: the client is handed an mppass by
+            # the website that launched it, computed from a salt the server published in a heartbeat
+            # to a site that has not existed for a decade. There is nothing for a token to do in it,
+            # and the announcement does not go anywhere near it.
+            printf 'port=%s\nverify-names=false\npublic=false\nmax-players=4\nmax-connections=3\nserver-name=Loki test\nmotd=Loki test\ngrow-trees=false\n' \
+                "$port" > "$dir/server.properties"
+        else
+            printf 'server-port=%s\nonline-mode=%s\nlevel-name=w\nmax-players=4\n' "$port" "$online" \
+                > "$dir/server.properties"
+        fi
+        loki_start_server "$dir" harness "-javaagent:$(topath "$loki_agent_jar")=$api" \
             || { fail "$version server did not start"; continue; }
 
         # The client is left running and the server is stopped under it, because that is one of the
@@ -128,10 +141,14 @@ for version in $versions; do
         kill -9 $client_pid 2>/dev/null || true
         wait $client_pid 2>/dev/null || true
 
-        if grep -q "logged in" "$dir/server.log"; then
+        # "logged in with entity id" from Beta on, a bare "logged in" in Alpha, and "connected" in
+        # Classic, which had none of that vocabulary yet.
+        # Not just "connected": Classic says "tried to connect, but ..." when it turns someone away,
+        # and a check that counts a refusal as an arrival is worse than no check at all.
+        if grep -E "logged in|connected" "$dir/harness.log" | grep -qv "tried to connect"; then
             ok "$mode client got into the game"
         else
-            fail "$mode client never logged in, see $marker and $dir/server.log"
+            fail "$mode client never logged in, see $marker and $dir/harness.log"
         fi
 
         if [ "$mode" = loki ]; then

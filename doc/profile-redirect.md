@@ -138,7 +138,7 @@ era rather than reasoned about.
 Two things happen, and both fail towards doing nothing:
 
 1. **The client marks itself**, in a field its own packets already carry and nothing reads. It never
-   makes a packet longer than it was, except in one case where the field is a counted string and the
+   makes a packet longer than it was, except from 1.3, where the field is a counted string and the
    count is updated with it. A server without Loki reads the field and ignores it, exactly as it
    ignored what was there before.
 2. **The server answers with a block** — `0xFE 'L' 'O' 'K'`, a length, and the declaration as UTF-8 —
@@ -150,6 +150,7 @@ Where the mark goes depends on the version, and there are more shapes down there
 
 | Versions | Protocol | Where the mark goes |
 |---|---|---|
+| a1.0.11 – a1.1.2_01 | 10 – 14, then 1 – 2 | the password field, which is a constant nothing reads |
 | a1.2.0 – b1.4_01 | 3 – 10 | the map seed in the login packet, behind the password string |
 | b1.5 – 1.1 | 11 – 23 | the map seed, straight after the username |
 | 1.2.1 – 1.2.5 | 28 – 29 | the two zero ints behind the level type |
@@ -157,17 +158,30 @@ Where the mark goes depends on the version, and there are more shapes down there
 
 A client sends the seed as zero because it has no seed to send, which is what makes those eight bytes
 free; Loki writes there only if it finds zeros, so a packet shaped differently costs a declaration
-rather than the login. From 1.3 the login packet has no username at all, and the mark moves to the
-host — the address the client says it dialled, which the server already knows and drops. That is the
-field Forge has appended `\0FML\0` to since the same release. It is also the only part of this a
-proxy can see, since a proxy does read the host:
+rather than the login.
+
+The earliest Alpha has no seed — its login packet ends after the password — so the password is the
+space instead. The client of that range always sends the literal `Password`, eight characters, and
+the servers of that range read it with an uncapped `readUTF` and never look at it again. Eight
+characters is what makes it the same mechanism: the marker replaces them, the string keeps its count
+and the packet keeps its length. Loki writes there only if it finds `Password`.
+
+Note the two tens in that table. The numbering restarted at a1.0.17, so a1.0.11 and b1.4_01 are both
+protocol 10, and one of them has a seed and the other does not. What separates them is that the
+older one sends no handshake at all — its login packet is the first thing on the wire — and that is
+what decides which shape is read.
+
+From 1.3 the login packet has no username at all, and the mark moves to the host: the address the
+client says it dialled, which the server already knows and drops. That is the field Forge has
+appended `\0FML\0` to since the same release. It is also the only part of this a proxy can see, since
+a proxy does read the host:
 
 ```
 -DLoki.no_legacy_handshake_marker=true
 ```
 
-Below a1.2.0 the login packet ends after the password and there is nothing spare in it, so those
-versions are left alone. Classic is not covered yet either: it does not use `java.net.Socket`.
+Classic is the one era not covered: it does not use `java.net.Socket`, so none of these filters are
+anywhere near it.
 
 Leaving restores, the same as on 1.7 and up. Nothing down here tells the game a visit is over, so the
 end of the connection stands in for it — the stream ending, the stream closing, or the socket being

@@ -513,6 +513,7 @@ public class LokiUtil {
                 "org/unmojang/loki/hooks/LegacyAnnounce.class",
                 "org/unmojang/loki/util/LegacyStreams.class",
                 "org/unmojang/loki/util/LegacyProtocol.class",
+                "org/unmojang/loki/util/ClassicChannels.class",
                 // Their logger, which depends on nothing but the JDK, so a second copy of it on the
                 // bootstrap path costs a few classes and no behaviour
                 "org/unmojang/loki/util/logger/NilLogger.class",

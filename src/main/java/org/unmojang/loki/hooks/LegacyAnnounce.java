@@ -167,6 +167,103 @@ public final class LegacyAnnounce {
         };
     }
 
+    // ------------------------------------------------------------------ Classic, over NIO
+
+    /** One state per channel, for the era that never asks a socket for its streams. */
+    private static final Map<Object, org.unmojang.loki.util.ClassicChannels.Conn> channels =
+            Collections.synchronizedMap(
+                    new WeakHashMap<Object, org.unmojang.loki.util.ClassicChannels.Conn>());
+
+    private static org.unmojang.loki.util.ClassicChannels.Conn connOf(Object channel) {
+        synchronized (channels) {
+            org.unmojang.loki.util.ClassicChannels.Conn conn = channels.get(channel);
+            if (conn == null) {
+                conn = new org.unmojang.loki.util.ClassicChannels.Conn();
+                channels.put(channel, conn);
+            }
+            return conn;
+        }
+    }
+
+    /** Called from {@code ServerSocketChannel.accept}, the NIO half of learning the role. */
+    public static Object acceptedChannel(Object channel) {
+        if (channel != null && !disabled()) connOf(channel).server = true;
+        return channel;
+    }
+
+    /** Called at the top of {@code SocketChannel.write}. */
+    public static void beforeChannelWrite(final Object channel, java.nio.ByteBuffer src) {
+        if (channel == null || src == null || disabled()) return;
+        try {
+            org.unmojang.loki.util.ClassicChannels.beforeWrite(connOf(channel), src,
+                    new org.unmojang.loki.util.ClassicChannels.Writer() {
+                        public String declaration() {
+                            return LegacyAnnounce.declaration();
+                        }
+
+                        public void write(java.nio.ByteBuffer block) {
+                            try {
+                                ((java.nio.channels.SocketChannel) channel).write(block);
+                            } catch (Throwable t) {
+                                log.debug("Could not send the declaration on this channel (" + t + ")");
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            log.debug("Not filtering this channel's writes (" + t + ")");
+        }
+    }
+
+    /** Called before every return of {@code SocketChannel.write}. */
+    public static int afterChannelWrite(int written, Object channel, java.nio.ByteBuffer src) {
+        if (channel == null || src == null || disabled()) return written;
+        try {
+            return org.unmojang.loki.util.ClassicChannels.afterWrite(connOf(channel), src, written);
+        } catch (Throwable t) {
+            log.debug("Not accounting for this channel's writes (" + t + ")");
+            return written;
+        }
+    }
+
+    /** Called before every return of {@code SocketChannel.read}. */
+    public static int afterChannelRead(int read, Object channel, java.nio.ByteBuffer dst) {
+        if (channel == null || dst == null || disabled()) return read;
+        try {
+            org.unmojang.loki.util.ClassicChannels.Conn conn = connOf(channel);
+            int given = org.unmojang.loki.util.ClassicChannels.afterRead(conn, dst, read);
+            if (conn.declaration != null) {
+                String declaration = conn.declaration;
+                conn.declaration = null;
+                log.info("Server declared where profiles come from: " + declaration);
+                announceChannel(channel, declaration);
+            }
+            return given;
+        } catch (Throwable t) {
+            log.debug("Not filtering this channel's reads (" + t + ")");
+            return read;
+        }
+    }
+
+    /** Called from {@code SocketChannel.close}, since a visit here ends the same way. */
+    public static void closingChannel(Object channel) {
+        if (channel == null || disabled()) return;
+        try {
+            java.net.Socket socket = ((java.nio.channels.SocketChannel) channel).socket();
+            if (socket != null && !connOf(channel).server) closing(socket);
+        } catch (Throwable t) {
+            log.debug("Could not tell whether that channel was the current server (" + t + ")");
+        }
+    }
+
+    private static void announceChannel(Object channel, String declaration) {
+        try {
+            java.net.Socket socket = ((java.nio.channels.SocketChannel) channel).socket();
+            if (socket != null) announce(socket, declaration);
+        } catch (Throwable t) {
+            log.debug("Could not apply what the server declared (" + t + ")");
+        }
+    }
+
     /**
      * Called from {@code Socket.close}, which from 1.3 is how a visit ends.
      * <p>

@@ -99,6 +99,12 @@ public class Loki {
         LokiUtil.retransformClass("java.net.Socket", inst);
         LokiUtil.retransformClass("java.net.ServerSocket", inst);
 
+        // The same announcement on Classic, which is the one era that never asks a socket for its
+        // streams: both ends of it are non-blocking NIO
+        LokiUtil.addRetransformTransformer(new ChannelTransformer(), inst);
+        LokiUtil.retransformClass("sun.nio.ch.SocketChannelImpl", inst);
+        LokiUtil.retransformClass("sun.nio.ch.ServerSocketChannelImpl", inst);
+
         // Apply 1.21.9+ fixes
         LokiUtil.apply1_21_9Fixes();
     }

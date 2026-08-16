@@ -74,23 +74,181 @@ public final class LegacyProtocol {
      * connection. The handshake is one string and has been since Alpha.
      */
     public static int handshakeLength(byte[] head, int seen) {
-        if (seen < 3) return -1;
-        int characters = ((head[1] & 0xFF) << 8) | (head[2] & 0xFF);
-        return 3 + characters * 2;
+        if (seen < 4) return -1;
+        // From 1.3 the handshake is not one string any more — it opens with a protocol version
+        // byte, then the username, the host and the port — and reading it as one walks off the end
+        // of the packet. It is told apart here rather than left to fail later: the high byte of a
+        // string's length can only be zero for a name, so anything else there is not this shape.
+        if (head[1] != 0) return -2;
+        int characters = head[2] & 0xFF;
+        if (characters == 0) return 3;
+        return 3 + characters * (isWide(head) ? 2 : 1);
     }
 
     /**
-     * Where the client's login packet keeps the eight bytes nobody reads, counted from the start of
-     * that packet, or -1 while the username's length has not arrived.
+     * Whether this client writes two bytes a character.
      * <p>
-     * The layout is a packet id, the protocol version, the username, and then the map seed — which
-     * the client sends as zero because a client has no seed to send. That is the marker's home: it
-     * changes no length, and a server without Loki reads it into a field it then ignores.
+     * It did not always: up to and including the early Alphas a string was written the way
+     * {@code DataOutputStream.writeUTF} writes one, a byte a character for anything ASCII, and only
+     * later did it become UTF-16. Which one this is decides where every packet after it ends, so it
+     * is read off the wire rather than assumed — the first character of a name is ASCII, so under
+     * UTF-16 the byte after the length is the zero half of it, and under UTF-8 it is the letter.
      */
-    public static int loginSeedOffset(byte[] login, int seen) {
-        if (seen < 7) return -1;
-        int characters = ((login[5] & 0xFF) << 8) | (login[6] & 0xFF);
-        return 1 + 4 + 2 + characters * 2;
+    public static boolean isWide(byte[] head) {
+        return head[3] == 0;
+    }
+
+    /** The protocol version, which is the first field of the login packet and says its shape. */
+    public static int protocolOf(byte[] login) {
+        return ((login[1] & 0xFF) << 24) | ((login[2] & 0xFF) << 16)
+                | ((login[3] & 0xFF) << 8) | (login[4] & 0xFF);
+    }
+
+    // ------------------------------------------------- which shape a login packet has
+
+    /** This version has no eight bytes to spare, so it gets no marker. */
+    public static final int STRINGS_NONE = -1;
+    /** The eight zero bytes follow the username directly. */
+    public static final int STRINGS_ONE = 1;
+    /** A second string comes between the username and them. */
+    public static final int STRINGS_TWO = 2;
+
+    /** a1.2.0, the first version whose login packet has eight spare bytes at all. */
+    public static final int PROTOCOL_A1_2_0 = 3;
+    /** b1.4_01, the last one that still sent a password string before them. */
+    public static final int PROTOCOL_B1_4_01 = 10;
+    /** b1.5, where the password went away, the seed moved up, and strings became UTF-16. */
+    public static final int PROTOCOL_B1_5 = 11;
+    /** 1.1, the last version whose seed follows the username directly. */
+    public static final int PROTOCOL_1_1 = 23;
+    /** 1.2.1, where a level type took the second string's place. */
+    public static final int PROTOCOL_1_2_1 = 28;
+    /** 1.2.5, the last version with a username in its login packet. */
+    public static final int PROTOCOL_1_2_5 = 29;
+
+    /**
+     * How many strings a login packet of this protocol carries before its eight unused bytes.
+     * <p>
+     * Every number here was read off the wire from the version's own client by
+     * {@code scripts/login-probe.sh}, and that is the point: the shape does not change once per era
+     * and the protocol version does not increase in step with the version. Between b1.5 and 1.1 the
+     * map seed follows the username; before that a password string comes first; in 1.2 it is a
+     * level type that does, followed by two zero ints occupying exactly the same eight bytes. That
+     * last one is why guessing was not good enough — reading 1.2 as if it were 1.1 puts the marker
+     * into a string's length field, and the server then waits for a name thirty-nine thousand
+     * characters long that is never coming.
+     * <p>
+     * The encoding is asked for as well as the version because the numbers repeat: a1.0.16 is
+     * protocol 14 and so is b1.7.3. They are told apart by how they write a string, which changed
+     * at exactly the same version the shape did.
+     */
+    public static int stringsBeforeSeed(int protocol, boolean wide) {
+        if (!wide) {
+            // Alpha and Beta up to b1.4_01: username, password, then the seed. Below a1.2.0 the
+            // packet ends after the password and there is nothing to write into.
+            return protocol >= PROTOCOL_A1_2_0 && protocol <= PROTOCOL_B1_4_01
+                    ? STRINGS_TWO : STRINGS_NONE;
+        }
+        if (protocol >= PROTOCOL_B1_5 && protocol <= PROTOCOL_1_1) return STRINGS_ONE;
+        if (protocol >= PROTOCOL_1_2_1 && protocol <= PROTOCOL_1_2_5) return STRINGS_TWO;
+        return STRINGS_NONE; // 1.3 and up: no username in the login packet at all
+    }
+
+    /** How long a name or a level type can plausibly be; past it, this is not a login packet. */
+    private static final int STRING_LIMIT = 256;
+
+    /**
+     * Walks a client's login packet a byte at a time and says when the eight unused ones go past.
+     * <p>
+     * A state machine rather than an offset, because the offset cannot be computed in advance: it
+     * sits behind one or two strings whose lengths are only known as they arrive, and which of the
+     * two it is behind is only known once the protocol version — the first field — has arrived. One
+     * instance follows one connection, and the same walk serves both ends: the client writes the
+     * marker into those eight bytes and the server reads them back out of the same place.
+     * <p>
+     * It gives up rather than guess. An unexpected packet id, a protocol whose shape is not one of
+     * the ones below, a string longer than any name: all of them stop the walk, and a stopped walk
+     * means the connection goes through untouched.
+     */
+    public static final class LoginWalk {
+        private final boolean wide;
+        private final int bytesPerCharacter;
+        private int seen;
+        private int protocol;
+        private int strings = STRINGS_NONE;
+        private int stringsDone;
+        private int lengthHigh = -1;
+        private int remaining = -1;
+        private int seedAt = -1;
+        private boolean stopped;
+
+        /** @param wide as the handshake said, since the login packet is written the same way */
+        public LoginWalk(boolean wide) {
+            this.wide = wide;
+            this.bytesPerCharacter = wide ? 2 : 1;
+        }
+
+        /**
+         * @return where this byte falls within the eight, or -1 when it falls outside them
+         */
+        public int step(byte b) {
+            if (stopped) return -1;
+            int at = seen++;
+
+            if (seedAt >= 0) {
+                int index = at - seedAt;
+                if (index >= LOGIN_MARKER.length - 1) stopped = true; // the last of them
+                return index;
+            }
+
+            if (at == 0) {
+                if (b != LOGIN) stopped = true;
+                return -1;
+            }
+            if (at <= 4) {
+                protocol = (protocol << 8) | (b & 0xFF);
+                if (at == 4) {
+                    strings = stringsBeforeSeed(protocol, wide);
+                    if (strings == STRINGS_NONE) stopped = true;
+                }
+                return -1;
+            }
+
+            if (remaining < 0) {
+                if (lengthHigh < 0) {
+                    lengthHigh = b & 0xFF;
+                    return -1;
+                }
+                int characters = (lengthHigh << 8) | (b & 0xFF);
+                lengthHigh = -1;
+                if (characters > STRING_LIMIT) {
+                    stopped = true; // not a string this protocol would have sent
+                    return -1;
+                }
+                remaining = characters * bytesPerCharacter;
+                if (remaining == 0) finishedString(at + 1);
+                return -1;
+            }
+
+            remaining--;
+            if (remaining == 0) finishedString(at + 1);
+            return -1;
+        }
+
+        private void finishedString(int next) {
+            remaining = -1;
+            if (++stringsDone >= strings) seedAt = next;
+        }
+
+        /** Whether this has given up, or has already seen all eight. */
+        public boolean isStopped() {
+            return stopped;
+        }
+
+        /** What the client said it was, once its first five bytes have gone past. */
+        public int protocol() {
+            return protocol;
+        }
     }
 
     /** The eight bytes written there, chosen so that a zero seed cannot be mistaken for it. */

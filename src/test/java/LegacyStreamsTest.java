@@ -61,6 +61,57 @@ public class LegacyStreamsTest {
         return concat(head, new byte[]{0, 0, 0, 0, 0, 0, 0, 0,   0, 0, 0, 0,   0, 0, 0});
     }
 
+    /** A string as a client of this era writes one: a count of characters, then the characters. */
+    private static byte[] string(String value, boolean wide) {
+        byte[] bytes = new byte[2 + value.length() * (wide ? 2 : 1)];
+        bytes[0] = (byte) (value.length() >> 8);
+        bytes[1] = (byte) value.length();
+        for (int i = 0; i < value.length(); i++) {
+            if (wide) {
+                bytes[2 + i * 2] = (byte) (value.charAt(i) >> 8);
+                bytes[3 + i * 2] = (byte) value.charAt(i);
+            } else {
+                bytes[2 + i] = (byte) value.charAt(i);
+            }
+        }
+        return bytes;
+    }
+
+    private static byte[] handshake(String value, boolean wide) {
+        return concat(new byte[]{LegacyProtocol.HANDSHAKE}, string(value, wide));
+    }
+
+    /**
+     * A login packet of the shape the version's own client sent: the id, the protocol version, the
+     * username, whatever second string that version put after it, and then the eight zero bytes —
+     * a map seed up to 1.1, two zero ints in 1.2 — followed by the trailing fields.
+     */
+    private static byte[] login(int protocol, boolean wide, int strings) {
+        byte[] packet = concat(new byte[]{LegacyProtocol.LOGIN,
+                (byte) (protocol >> 24), (byte) (protocol >> 16),
+                (byte) (protocol >> 8), (byte) protocol}, string("Probe", wide));
+        // The earliest Alpha ends after the password, with nothing spare behind it.
+        if (strings == 0) return concat(packet, string("Password", wide));
+        if (strings >= 2) packet = concat(packet, string(protocol >= 28 ? "" : "Password", wide));
+        return concat(packet, new byte[]{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
+    }
+
+    private static int differences(byte[] a, byte[] b) {
+        int count = 0;
+        for (int i = 0; i < Math.min(a.length, b.length); i++) {
+            if (a[i] != b[i]) count++;
+        }
+        return count + Math.abs(a.length - b.length);
+    }
+
+    private static int nonZero(byte[] bytes) {
+        int count = 0;
+        for (int i = 0; i < bytes.length; i++) {
+            if (bytes[i] != 0) count++;
+        }
+        return count;
+    }
+
     /** What the game sends next, and must receive intact whatever Loki did before it. */
     private static byte[] nextPacket() {
         return new byte[]{0x02, 0x03, 0x04, 0x05, 0x06, 0x07};
@@ -266,6 +317,79 @@ public class LegacyStreamsTest {
                     }, unmarked), serverSide, chunk);
             check("an unmarked client is sent nothing extra",
                     same(serverSide, plain.toByteArray()), null);
+        }
+
+        // One case per version, built from what that version's own client put on the wire —
+        // protocol number, string encoding, and what followed the username — as recorded by
+        // scripts/login-probe.sh into build/legacy-protocol/login.txt. The shapes below are not a
+        // reading of the protocol, they are a transcription of six real captures, which is the
+        // only reason to trust that the offsets are where the table says.
+        System.out.println();
+        System.out.println("== every shape below 1.7, as its own client sends it ==");
+        String[][] measured = {
+            // version, protocol, wide, strings before the eight bytes
+            {"a1.2.0",  "3",  "no",  "2"},
+            {"b1.4_01", "10", "no",  "2"},
+            {"b1.5_01", "11", "yes", "1"},
+            {"b1.8.1",  "17", "yes", "1"},
+            {"1.1",     "23", "yes", "1"},
+            {"1.2.5",   "29", "yes", "2"},
+            // Protocol 14 twice over: a1.0.16 writes a byte a character and has no seed to spare,
+            // b1.7.3 writes two and does. Only the encoding tells them apart.
+            {"a1.0.16", "14", "no",  "0"},
+            {"b1.7.3",  "14", "yes", "1"},
+        };
+
+        for (int v = 0; v < measured.length; v++) {
+            String version = measured[v][0];
+            int protocol = Integer.parseInt(measured[v][1]);
+            boolean wide = "yes".equals(measured[v][2]);
+            int strings = Integer.parseInt(measured[v][3]);
+
+            byte[] handshake = handshake(version.startsWith("1.2") ? "Probe;127.0.0.1:25733" : "Probe", wide);
+            byte[] login = login(protocol, wide, strings);
+            byte[] whole = concat(handshake, login);
+
+            for (int c = 0; c < chunks.length; c++) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                writeAll(LegacyStreams.markBetaLogin(out), whole, chunks[c]);
+                byte[] sent = out.toByteArray();
+
+                check(version + ": the packets keep their length", sent.length == whole.length,
+                        whole.length + " -> " + sent.length);
+
+                LegacyStreams.Marked flag = new LegacyStreams.Marked();
+                readAll(LegacyStreams.watchBetaLogin(new ByteArrayInputStream(sent), flag), chunks[c]);
+                if (strings == 0) {
+                    check(version + ": has nowhere to put a marker, and none is put",
+                            !flag.isMarked() && same(whole, sent), null);
+                } else {
+                    check(version + ": the marker lands where the seed was, and the server reads it",
+                            flag.isMarked(), null);
+                    // The packet was all zeros where the marker went, so exactly the marker's own
+                    // non-zero bytes are the ones that changed. One more or one fewer means it
+                    // landed somewhere it should not have.
+                    check(version + ": and nothing outside those eight bytes moved",
+                            differences(whole, sent) == nonZero(LegacyProtocol.LOGIN_MARKER),
+                            differences(whole, sent) + " bytes differ");
+                }
+            }
+        }
+
+        // 1.3 changed the handshake into four fields, and reading it as one string walks off the
+        // end of the packet. The filter has to recognise that and stand down rather than wait for
+        // a boundary that is not coming.
+        byte[] modernHandshake = {LegacyProtocol.HANDSHAKE, 39, 0, 5, 0, 'P', 0, 'r', 0, 'o', 0, 'b', 0, 'e'};
+        for (int c = 0; c < chunks.length; c++) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            writeAll(LegacyStreams.markBetaLogin(out), modernHandshake, chunks[c]);
+            check("a 1.3 handshake goes out untouched", same(modernHandshake, out.toByteArray()), null);
+
+            Recorder none = new Recorder();
+            byte[] back = readAll(LegacyStreams.stripAfter(new ByteArrayInputStream(modernHandshake),
+                    LegacyStreams.afterHandshake(), LegacyProtocol.HANDSHAKE, none), chunks[c]);
+            check("and comes back untouched, with nothing declared",
+                    same(modernHandshake, back) && none.declaration == null, none.declaration);
         }
 
         // These filters are installed on java.net.Socket, so every socket in the process meets them

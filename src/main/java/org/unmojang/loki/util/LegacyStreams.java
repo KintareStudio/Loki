@@ -20,6 +20,9 @@ import java.io.OutputStream;
  * available here is that a declaration is missed, and that is much better than the alternative.
  */
 public final class LegacyStreams {
+    /** What a {@link Prefix} answers when the bytes it was given are not its packet at all. */
+    public static final int NEVER = -2;
+
     /** Told the declaration a server sent, once. */
     public interface Sink {
         void declared(String declaration);
@@ -41,7 +44,8 @@ public final class LegacyStreams {
         /**
          * @param head the first bytes of the stream, up to whatever this needs
          * @param seen how many of them have arrived
-         * @return the length, or -1 while it cannot be known yet
+         * @return the length, -1 while it cannot be known yet, or {@link #NEVER} when these bytes
+         *         are not the packet this reads and it never will be
          */
         int length(byte[] head, int seen);
 
@@ -74,9 +78,9 @@ public final class LegacyStreams {
                 return LegacyProtocol.handshakeLength(head, seen);
             }
 
-            /** The id and the two bytes of the string's length. */
+            /** The id, the two bytes of the length, and the first byte of the string itself. */
             public int lookahead() {
-                return 3;
+                return 4;
             }
         };
     }
@@ -227,6 +231,7 @@ public final class LegacyStreams {
                     head[seen + i] = bytes[at + i];
                 }
                 prefixBytes = prefix.length(head, Math.min(seen + length, head.length));
+                if (prefixBytes == NEVER) applicable = false; // not a packet this appends to
             }
 
             /**
@@ -259,9 +264,9 @@ public final class LegacyStreams {
             private boolean done;
             private boolean applicable = true;
             private boolean inLogin;
-            private int seen;          // within the current packet
+            private int seen;          // within the handshake, which is all this counts itself
             private int handshakeEnd = -1;
-            private int seedAt = -1;
+            private LegacyProtocol.LoginWalk walk;
 
             public void write(int b) throws IOException {
                 out.write(done || !applicable ? b : filter((byte) b));
@@ -290,35 +295,34 @@ public final class LegacyStreams {
                     }
                     seen++;
                     if (handshakeEnd < 0) handshakeEnd = LegacyProtocol.handshakeLength(head, seen);
+                    if (handshakeEnd == NEVER) {
+                        applicable = false; // a handshake of a shape this does not read: 1.3 and up
+                        return b;
+                    }
                     if (handshakeEnd > 0 && seen >= handshakeEnd) {
                         inLogin = true;
+                        // The login packet writes its strings the way the handshake wrote its own,
+                        // so the walk is told which of the two that was.
+                        walk = new LegacyProtocol.LoginWalk(LegacyProtocol.isWide(head));
                         seen = 0;
                     }
                     return b;
                 }
 
-                if (seen < head.length) head[seen] = b;
-                if (seen == 0 && b != LegacyProtocol.LOGIN) {
-                    done = true; // whatever this is, the seed is not in it
-                    return b;
-                }
-                if (seedAt < 0) seedAt = LegacyProtocol.loginSeedOffset(head, seen + 1);
-
                 // Only over zeros. A client sends the seed as zero because it has no seed to send,
-                // so anything else there means this packet is not shaped the way this expects — an
-                // Alpha login carries a second string before the seed, and a 1.6 handshake carries
-                // a host and a port — and writing into it would corrupt the connection. Refusing
-                // costs a declaration; being wrong costs the login.
+                // so anything else there means this packet is not shaped the way the walk read it,
+                // and writing into it would corrupt the connection. Refusing costs a declaration;
+                // being wrong costs the login.
+                int index = walk.step(b);
                 byte written = b;
-                if (seedAt > 0 && seen >= seedAt && seen < seedAt + LegacyProtocol.LOGIN_MARKER.length) {
+                if (index >= 0) {
                     if (b != 0) {
                         done = true; // not the field this was looking for
                         return b;
                     }
-                    written = LegacyProtocol.LOGIN_MARKER[seen - seedAt];
+                    written = LegacyProtocol.LOGIN_MARKER[index];
                 }
-                seen++;
-                if (seedAt > 0 && seen >= seedAt + LegacyProtocol.LOGIN_MARKER.length) done = true;
+                if (walk.isStopped()) done = true;
                 return written;
             }
         };
@@ -334,7 +338,7 @@ public final class LegacyStreams {
             private boolean inLogin;
             private int seen;
             private int handshakeEnd = -1;
-            private int seedAt = -1;
+            private LegacyProtocol.LoginWalk walk;
 
             public int read() throws IOException {
                 int b = in.read();
@@ -360,28 +364,28 @@ public final class LegacyStreams {
                     }
                     seen++;
                     if (handshakeEnd < 0) handshakeEnd = LegacyProtocol.handshakeLength(head, seen);
+                    if (handshakeEnd == NEVER) {
+                        applicable = false; // a handshake of a shape this does not read: 1.3 and up
+                        return;
+                    }
                     if (handshakeEnd > 0 && seen >= handshakeEnd) {
                         inLogin = true;
+                        // The login packet writes its strings the way the handshake wrote its own,
+                        // so the walk is told which of the two that was.
+                        walk = new LegacyProtocol.LoginWalk(LegacyProtocol.isWide(head));
                         seen = 0;
                     }
                     return;
                 }
 
-                if (seen < head.length) head[seen] = b;
-                if (seen == 0 && b != LegacyProtocol.LOGIN) {
-                    done = true;
-                    return;
-                }
-                if (seedAt < 0) seedAt = LegacyProtocol.loginSeedOffset(head, seen + 1);
-
-                if (seedAt > 0 && seen >= seedAt && seen < seedAt + seed.length) {
-                    seed[seen - seedAt] = b;
-                    if (seen == seedAt + seed.length - 1) {
-                        if (LegacyProtocol.isLoginMarker(seed, 0)) marked.mark();
-                        done = true;
+                int index = walk.step(b);
+                if (index >= 0) {
+                    seed[index] = b;
+                    if (index == seed.length - 1 && LegacyProtocol.isLoginMarker(seed, 0)) {
+                        marked.mark();
                     }
                 }
-                seen++;
+                if (walk.isStopped()) done = true;
             }
         };
     }
@@ -416,6 +420,10 @@ public final class LegacyStreams {
                 // Asked before reading, not after: a prefix that never varies answers straight
                 // away, and a reader that waited for bytes first would already have overshot it
                 if (applicable && prefixBytes < 0) prefixBytes = prefix.length(head, seen);
+                // A prefix that says it will never know — a packet of a shape this does not read —
+                // stands the filter down. Left as "not yet", it would go on capping every read at
+                // a boundary it is not going to find, and eventually cap them at nothing.
+                if (prefixBytes == NEVER) applicable = false;
                 if (applicable && !decided && prefixBytes >= 0 && seen >= prefixBytes) removeBlock();
 
                 // Never read past the boundary in one go, or the block would be handed to the game

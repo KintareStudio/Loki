@@ -59,18 +59,18 @@ loki_fetch_server "$version" "$work" || exit 1
 mkdir -p "$work/pinger"
 "$loki_java_home/bin/javac" -cp "$(topath "$loki_agent_jar")" -d "$(topath "$work/pinger")" \
     "$(topath "$loki_root/src/test/java/ServerPing.java")" \
-    "$(topath "$loki_root/src/test/java/LegacyPing.java")" \
     "$(topath "$loki_root/src/test/java/NettyRig.java")"
 classpath="$(topath "$loki_agent_jar")$cp_sep$(topath "$work/pinger")"
 
-legacy=$(loki_legacy_server_url "$version")
-if [ -n "$legacy" ]; then
-    pinger=LegacyPing
-    declared_marker="loki=$api"
-else
-    pinger=ServerPing
-    declared_marker="\"session\":\"$api/sessionserver\""
+# 1.7 and up only, which is where a status response exists to put a declaration in. Below that the
+# declaration travels on the game connection instead, and legacy-matrix.sh is what tests it — with
+# a real client on the other end, which is the only way to know it arrived.
+if [ -n "$(loki_legacy_server_url "$version")" ]; then
+    echo "  $version has no status response to declare in; use scripts/legacy-matrix.sh" >&2
+    exit 3
 fi
+pinger=ServerPing
+declared_marker="\"session\":\"$api/sessionserver\""
 
 # ----------------------------------------------------------------- run and ping
 ping_json=""
@@ -84,8 +84,6 @@ start_and_ping() {
     # broken response into a long silence.
     attempt=0
     while [ $attempt -lt 3 ]; do
-        # A server from before 1.7 does not speak the modern status protocol at all: it answers a
-        # single 0xFE with one string. Different protocol, different pinger.
         ping_json=$("$loki_java_bin" -cp "$classpath" $pinger 127.0.0.1 "$port" 5000 \
             2>>"$work/$label-ping.log" || true)
         [ -n "$ping_json" ] && break
@@ -146,23 +144,14 @@ if start_and_ping loki "-javaagent:$(topath "$loki_agent_jar")=$api" \
         *'"loki"'*|*"loki="*) fail "declared something unexpected: $ping_json" ;;
         *) fail "no declaration in the status response" ;;
     esac
-    if [ -n "$legacy" ]; then
-        # No version field to lose here. What matters is that the server's own fields — the MOTD
-        # and the two counts, separated by section signs the pinger prints as $ — are still there
-        case "$ping_json" in
-            *'$'*'$'*) ok "the server's own fields survived the rewrite" ;;
-            *) fail "the response lost the fields the game reads: $ping_json" ;;
-        esac
-    else
-        case "$ping_json" in
-            *'"version"'*) ok "the rest of the status survived the rewrite" ;;
-            *) fail "the status response lost its own fields: $ping_json" ;;
-        esac
-        case "$ping_json" in
-            *'"enforceSecureProfile":true'*) ok "and passed on that it checks signatures here" ;;
-            *) fail "did not declare secure profile enforcement, which it was started with" ;;
-        esac
-    fi
+    case "$ping_json" in
+        *'"version"'*) ok "the rest of the status survived the rewrite" ;;
+        *) fail "the status response lost its own fields: $ping_json" ;;
+    esac
+    case "$ping_json" in
+        *'"enforceSecureProfile":true'*) ok "and passed on that it checks signatures here" ;;
+        *) fail "did not declare secure profile enforcement, which it was started with" ;;
+    esac
 else
     fail "Loki run did not come up"
 fi

@@ -103,9 +103,30 @@ for version in $versions; do
         loki_start_server "$dir" server "-javaagent:$(topath "$loki_agent_jar")=$api" \
             || { fail "$version server did not start"; continue; }
 
-        LOKI_CLIENT_SECONDS=${LOKI_CLIENT_SECONDS:-25} \
+        # The client is left running and the server is stopped under it, because that is one of the
+        # two ways a visit really ends — the other being the player quitting — and it is the one
+        # that can be arranged from here. Killing the client instead proves nothing about what
+        # happens when a connection ends: a process that is shot never closes anything.
+        seconds=${LOKI_CLIENT_SECONDS:-25}
+        LOKI_CLIENT_SECONDS=$((seconds + 30)) \
             sh "$loki_root/scripts/legacy-client.sh" "$version" 127.0.0.1 "$port" \
-            "$name" "token:$token:$uuid" > "$marker" 2>&1 || true
+            "$name" "token:$token:$uuid" > "$marker" 2>&1 &
+        client_pid=$!
+
+        waited=0
+        while [ $waited -lt $seconds ] && kill -0 $client_pid 2>/dev/null; do
+            sleep 2
+            waited=$((waited + 2))
+        done
+
+        loki_stop_server
+        sleep 6                       # long enough for the client to notice and say so
+
+        for child in $(ps | awk -v parent="$client_pid" '$2 == parent { print $1 }'); do
+            kill -9 "$child" 2>/dev/null || true
+        done
+        kill -9 $client_pid 2>/dev/null || true
+        wait $client_pid 2>/dev/null || true
 
         if grep -q "logged in with entity id" "$dir/server.log"; then
             ok "$mode client got into the game"
@@ -118,6 +139,15 @@ for version in $versions; do
                 ok "and was told where profiles come from"
             else
                 fail "no declaration reached the client, see $marker"
+            fi
+
+            # An override that outlives the visit is worse than no override: the next server, or
+            # single player, would go on being answered by this one's API. Below 1.7 nothing tells
+            # the game the visit is over, so the end of the connection has to.
+            if grep -q "back to the configured profile API" "$marker"; then
+                ok "and put it back on the way out"
+            else
+                fail "the override outlived the connection, see $marker"
             fi
         else
             if grep -q "loki" "$marker"; then

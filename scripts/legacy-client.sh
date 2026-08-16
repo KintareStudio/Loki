@@ -103,6 +103,41 @@ fi
 
 echo "  $version -> $host:$port as $username${agent:+ (with Loki)}"
 cd "$work/game"
+
+# 1.6 dropped the applet — that is the release the launcher was rewritten for — and replaced it
+# with a main class that takes the same information as arguments, --server and --port included. So
+# the way in depends on which of the two this version has, and the jar is asked rather than a
+# cutoff being written down.
+if "$jdk/bin/jar" tf "$(topath "$work/client.jar")" 2>/dev/null \
+        | grep -q "^net/minecraft/client/main/Main.class$"; then
+    # 1.6 still takes the whole "token:<token>:<uuid>" string the old launcher passed around, under
+    # --session; 1.7 split it into --accessToken and --uuid. Which one this build wants is read out
+    # of its own Main rather than guessed, because passing the wrong one is not an error the game
+    # reports: joptsimple rejects the unknown option, or the session ends up half empty and the
+    # client dies encoding a null on the connecting screen.
+    credentials="--session $session"
+    mkdir -p "$work/main"
+    (cd "$work/main" && "$jdk/bin/jar" xf "$(topath "$work/client.jar")" \
+        net/minecraft/client/main/Main.class 2>/dev/null) || true
+    if grep -aq "accessToken" "$work/main/net/minecraft/client/main/Main.class" 2>/dev/null; then
+        token=${session#token:}
+        uuid=${token#*:}
+        token=${token%%:*}
+        credentials="--accessToken $token --uuid $uuid"
+    fi
+
+    "$jdk/bin/java" $agent $LOKI_CLIENT_JVM_ARGS \
+        "-Djava.library.path=$(topath "$work/natives")" \
+        -cp "$classpath" net.minecraft.client.main.Main \
+        --username "$username" $credentials --version "$version" \
+        --gameDir "$(topath "$work/game")" --assetsDir "$(topath "$work/game/assets")" \
+        --server "$host" --port "$port" &
+    client=$!
+    sleep "${LOKI_CLIENT_SECONDS:-40}"
+    kill "$client" 2>/dev/null || true
+    exit 0
+fi
+
 "$jdk/bin/java" $agent $LOKI_CLIENT_JVM_ARGS \
     "-Djava.library.path=$(topath "$work/natives")" \
     -Dloki.seconds="${LOKI_CLIENT_SECONDS:-40}" \

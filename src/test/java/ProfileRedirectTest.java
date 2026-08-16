@@ -611,6 +611,32 @@ public class ProfileRedirectTest {
                 && ProfileRedirect.sessionBase().startsWith("http://cleartext.example"),
                 ProfileRedirect.sessionBase());
 
+        // A proxy connects onward for a player who connected to it, and on that connection the
+        // server behind it may declare an API server of its own. It does not get to: the address
+        // the player typed is the proxy's, that is what any override here would be keyed on, and a
+        // network behind a proxy has one API server that the proxy already knows about.
+        System.out.println();
+        System.out.println("== a server declaring to something that is serving players itself ==");
+        System.setProperty("Loki.serving", "true");
+        join("127.0.0.1", declaring.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        // Nothing in force at all, which is the whole of it: arriving somewhere drops whatever the
+        // last place had said, and this one's answer is not taken up in its place.
+        check("what a server behind a proxy declares is not taken up by the proxy",
+                ProfileRedirect.sessionBase() == null, ProfileRedirect.sessionBase());
+
+        // And the moment it is nobody's proxy — a player who opened a world to the LAN and then
+        // went to play on a server — declarations count again.
+        // A different server, so that this is a fresh arrival rather than a second look at one
+        // already asked and answered.
+        System.setProperty("Loki.serving", "false");
+        join("127.0.0.1", cleartext.port());
+        ProfileRedirect.awaitDiscovery(8000L);
+        check("and once it is serving nobody, a server it joins is heard again",
+                ProfileRedirect.sessionBase() != null
+                        && ProfileRedirect.sessionBase().startsWith("http://cleartext.example"),
+                ProfileRedirect.sessionBase());
+
         primary.server.stop(0);
         declared.server.stop(0);
 

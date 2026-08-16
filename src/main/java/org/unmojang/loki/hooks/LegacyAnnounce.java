@@ -43,9 +43,40 @@ public final class LegacyAnnounce {
 
     /** Called from {@code ServerSocket.accept}, which is how this end learns it is the server. */
     public static Object accepted(Object socket) {
-        if (socket != null && !disabled()) accepted.put(socket, Boolean.TRUE);
+        if (socket != null && !disabled()) {
+            accepted.put(socket, Boolean.TRUE);
+            nowServing(1);
+        }
         return socket;
     }
+
+    /**
+     * How many game connections this process is currently serving.
+     * <p>
+     * Which is how it knows what it is, without being told. A client dials out and never accepts. A
+     * server accepts and never dials. A proxy is doing both at once, and only while it is doing
+     * both at once is a declaration arriving on a connection it made a declaration from a server it
+     * is standing in front of.
+     * <p>
+     * Live connections rather than "has ever accepted", because a player who opens a world to the
+     * LAN accepts connections too. That must not leave their client ignoring what servers declare
+     * for the rest of the session, and it does not: by the time they join one, they are serving
+     * nobody.
+     */
+    private static int servingCount;
+
+    private static void nowServing(int change) {
+        synchronized (accepted) {
+            servingCount += change;
+            if (servingCount < 0) servingCount = 0;
+        }
+        // Where the other class loader can see it: the announcement lives on the bootstrap path and
+        // the redirect it feeds does not, and a property is what the two already share.
+        System.setProperty(SERVING, servingCount > 0 ? "true" : "false");
+    }
+
+    /** Set while this process has a player connected to it, and read by {@code ProfileRedirect}. */
+    public static final String SERVING = "Loki.serving";
 
     private static boolean isServer(Object socket) {
         return accepted.containsKey(socket);
@@ -191,7 +222,10 @@ public final class LegacyAnnounce {
 
     /** Called from {@code ServerSocketChannel.accept}, the NIO half of learning the role. */
     public static Object acceptedChannel(Object channel) {
-        if (channel != null && !disabled()) connOf(channel).server = true;
+        if (channel != null && !disabled()) {
+            connOf(channel).server = true;
+            nowServing(1);
+        }
         return channel;
     }
 
@@ -251,14 +285,21 @@ public final class LegacyAnnounce {
     /** Called from {@code SocketChannel.close}, since a visit here ends the same way. */
     public static void closingChannel(Object channel) {
         if (channel == null || disabled()) return;
+        // Taken out here rather than left to be collected, so that the count of who is being served
+        // falls the moment a player leaves rather than whenever the map next notices.
+        org.unmojang.loki.util.ClassicChannels.Conn conn;
+        synchronized (channels) {
+            conn = channels.remove(channel);
+        }
+        if (conn == null) return;
+        if (conn.server) {
+            nowServing(-1);
+            return;
+        }
         // Only a channel that was told something has anything to put back, and asking any other
         // one costs a socket lookup on every connection a Netty program ever closes — which on a
         // proxy is all of them, and on some of them the lookup is not even allowed.
-        org.unmojang.loki.util.ClassicChannels.Conn conn;
-        synchronized (channels) {
-            conn = channels.get(channel);
-        }
-        if (conn == null || conn.server || !conn.declaredHere) return;
+        if (!conn.declaredHere) return;
 
         try {
             java.net.Socket socket = ((java.nio.channels.SocketChannel) channel).socket();
@@ -286,7 +327,11 @@ public final class LegacyAnnounce {
      * closing changes nothing.
      */
     public static void closing(java.net.Socket socket) {
-        if (socket == null || disabled() || isServer(socket)) return;
+        if (socket == null || disabled()) return;
+        if (accepted.remove(socket) != null) {
+            nowServing(-1); // a player has left this server, which is one fewer being served
+            return;
+        }
         try {
             java.net.InetAddress address = socket.getInetAddress();
             if (address != null) leave(address.getHostAddress(), socket.getPort());

@@ -58,6 +58,14 @@ public final class ProfileRedirect {
 
     /** Cross-classloader bus. Loki's hooks are duplicated per classloader, system properties are not. */
     private static final String PROP_PEER = "Loki.profile_redirect.peer";
+    /**
+     * Set while this process has players connected to it, by whichever half of Loki accepted them.
+     * <p>
+     * A property rather than a field because the two halves are on different class loaders: the
+     * pre-1.7 announcement sits on the bootstrap path so that {@code java.net.Socket} can reach it,
+     * and this does not.
+     */
+    private static final String PROP_SERVING = "Loki.serving";
     private static final String PROP_ORIGIN = "Loki.profile_redirect.origin";
     private static final String PROP_SESSION = "Loki.profile_redirect.session";
     private static final String PROP_ACCOUNT = "Loki.profile_redirect.account";
@@ -375,6 +383,18 @@ public final class ProfileRedirect {
     private static void publishIfCurrent(String peer, Discovery discovery) {
         if (!peer.equals(System.getProperty(PROP_PEER))) return; // we have since moved on
         if (!discovery.found()) return;
+
+        // A proxy is the authority on the network behind it. Players connect to the proxy, its
+        // address is the one they typed and the one this override is keyed on, and a network behind
+        // it usually has one API server that the proxy already knows about — so a server it is
+        // standing in front of does not get to answer a question the player asked the proxy. It is
+        // recognised without being told: only a proxy is serving players and connecting onward at
+        // the same moment.
+        if (Boolean.getBoolean(PROP_SERVING)) {
+            log.debug("Ignoring what " + peer + " declared: this process is serving players of its"
+                    + " own, so it is the authority on where profiles come from");
+            return;
+        }
 
         // Only what was declared. An endpoint left unnamed keeps going where it was already going.
         setOrClear(PROP_SESSION, discovery.session);

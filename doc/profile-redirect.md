@@ -225,6 +225,14 @@ is itself reading from. It has to be: proxies old enough to serve those versions
 carry a Netty whose handler API was replaced in 2013, and Loki cannot install a handler in it at
 all. Underneath is the one place every one of them looks the same.
 
+**The proxy is the authority.** A server behind it that also runs Loki does not get to declare over
+it: its declaration is taken out of the stream and dropped rather than passed on or acted upon. That
+is not a preference, it is what the addresses say — the player typed the proxy's address, that is
+what any override is keyed on, and a network behind a proxy has one API server that the proxy
+already knows about. Loki works out which it is without being told: only a proxy is serving players
+and connecting onward at the same moment. A player who opens a world to the LAN is serving someone
+too, and is back to hearing servers normally the moment they are not.
+
 If you would rather the marker never left your client at all:
 
 ```

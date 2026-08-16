@@ -112,7 +112,33 @@ public final class LegacyProtocol {
     public static final int STRINGS_ONE = 1;
     /** A second string comes between the username and them. */
     public static final int STRINGS_TWO = 2;
+    /**
+     * There is no seed at all, and the eight bytes are the password's own.
+     * <p>
+     * The earliest Alpha login packet ends after the password, so there is nothing behind it to
+     * write into. The field itself is the space: the client sends the literal {@code Password} —
+     * eight characters, the same in every version of this range — and the server reads it with an
+     * uncapped {@code readUTF} and never looks at it again. That was read out of a0.1.2_01, a0.1.4
+     * and a0.2.0 rather than assumed; in all three the handler takes the password as an argument
+     * and the argument is never loaded.
+     * <p>
+     * Being exactly eight characters is what makes this the same mechanism as the seed rather than
+     * a second one: the marker replaces them in place, the string keeps its count, and the packet
+     * keeps its length.
+     */
+    public static final int STRINGS_PASSWORD = 3;
 
+    /** What the client of that range puts in the field, and the only thing this will replace. */
+    public static final String PASSWORD = "Password";
+
+    /** What replaces it. Printable throughout, since it travels as a string rather than a seed. */
+    public static final byte[] PASSWORD_MARKER = {'L', 'o', 'k', 'i', '0', '0', '0', '1'};
+
+    /** a1.1.2_01, the last version before the login packet grew a seed. */
+    public static final int PROTOCOL_A1_1_2 = 2;
+    /** a1.0.15 and a1.0.16, the numbering before a1.0.17 restarted it at one. */
+    public static final int PROTOCOL_A1_0_15 = 13;
+    public static final int PROTOCOL_A1_0_16 = 14;
     /** a1.2.0, the first version whose login packet has eight spare bytes at all. */
     public static final int PROTOCOL_A1_2_0 = 3;
     /** b1.4_01, the last one that still sent a password string before them. */
@@ -142,12 +168,21 @@ public final class LegacyProtocol {
      * protocol 14 and so is b1.7.3. They are told apart by how they write a string, which changed
      * at exactly the same version the shape did.
      */
-    public static int stringsBeforeSeed(int protocol, boolean wide) {
+    public static int stringsBeforeSeed(int protocol, boolean wide, boolean afterHandshake) {
         if (!wide) {
-            // Alpha and Beta up to b1.4_01: username, password, then the seed. Below a1.2.0 the
-            // packet ends after the password and there is nothing to write into.
-            return protocol >= PROTOCOL_A1_2_0 && protocol <= PROTOCOL_B1_4_01
-                    ? STRINGS_TWO : STRINGS_NONE;
+            // Nothing older than the handshake has a seed to write into, and the handshake is the
+            // only thing that tells those versions apart from the ones that do: the numbering
+            // restarted at a1.0.17, so a1.0.11 and b1.4_01 are both protocol 10. One sends a
+            // handshake first and the other does not, and that is the whole difference. Reading
+            // a1.0.11 as b1.4_01 would look for eight bytes past the end of its login packet and
+            // write the marker into whatever the client sent next.
+            if (!afterHandshake) return STRINGS_PASSWORD;
+
+            // Alpha and Beta up to b1.4_01: username, password, then the seed.
+            if (protocol >= PROTOCOL_A1_2_0 && protocol <= PROTOCOL_B1_4_01) return STRINGS_TWO;
+            // a1.0.16, and a1.0.17 to a1.1.2_01 after the restart: still no seed.
+            if (protocol == PROTOCOL_A1_0_16) return STRINGS_PASSWORD;
+            return protocol >= 1 && protocol <= PROTOCOL_A1_1_2 ? STRINGS_PASSWORD : STRINGS_NONE;
         }
         if (protocol >= PROTOCOL_B1_5 && protocol <= PROTOCOL_1_1) return STRINGS_ONE;
         if (protocol >= PROTOCOL_1_2_1 && protocol <= PROTOCOL_1_2_5) return STRINGS_TWO;
@@ -266,6 +301,7 @@ public final class LegacyProtocol {
      */
     public static final class LoginWalk {
         private final boolean wide;
+        private final boolean afterHandshake;
         private final int bytesPerCharacter;
         private int seen;
         private int protocol;
@@ -277,7 +313,8 @@ public final class LegacyProtocol {
         private boolean stopped;
 
         /** @param wide as the handshake said, since the login packet is written the same way */
-        public LoginWalk(boolean wide) {
+        public LoginWalk(boolean wide, boolean afterHandshake) {
+            this.afterHandshake = afterHandshake;
             this.wide = wide;
             this.bytesPerCharacter = wide ? 2 : 1;
         }
@@ -302,7 +339,7 @@ public final class LegacyProtocol {
             if (at <= 4) {
                 protocol = (protocol << 8) | (b & 0xFF);
                 if (at == 4) {
-                    strings = stringsBeforeSeed(protocol, wide);
+                    strings = stringsBeforeSeed(protocol, wide, afterHandshake);
                     if (strings == STRINGS_NONE) stopped = true;
                 }
                 return -1;
@@ -320,6 +357,19 @@ public final class LegacyProtocol {
                     return -1;
                 }
                 remaining = characters * bytesPerCharacter;
+
+                // Where there is no seed, the second string's own bytes are the eight, and its
+                // length is what says whether this is the field: the client of that range sends
+                // "Password" and nothing else, so anything of another length is not it.
+                if (strings == STRINGS_PASSWORD && stringsDone == 1) {
+                    if (characters != PASSWORD.length()) {
+                        stopped = true;
+                        return -1;
+                    }
+                    seedAt = at + 1;
+                    return -1;
+                }
+
                 if (remaining == 0) finishedString(at + 1);
                 return -1;
             }
@@ -332,6 +382,25 @@ public final class LegacyProtocol {
         private void finishedString(int next) {
             remaining = -1;
             if (++stringsDone >= strings) seedAt = next;
+        }
+
+        /** What has to be at this position for the eight bytes to be the ones this may replace. */
+        public byte expectedAt(int index) {
+            return strings == STRINGS_PASSWORD ? (byte) PASSWORD.charAt(index) : 0;
+        }
+
+        /** What goes there instead. */
+        public byte markerAt(int index) {
+            return strings == STRINGS_PASSWORD ? PASSWORD_MARKER[index] : LOGIN_MARKER[index];
+        }
+
+        /** Whether the eight bytes just read are a marker rather than what was there before. */
+        public boolean isMarker(byte[] eight) {
+            byte[] wanted = strings == STRINGS_PASSWORD ? PASSWORD_MARKER : LOGIN_MARKER;
+            for (int i = 0; i < wanted.length; i++) {
+                if (eight[i] != wanted[i]) return false;
+            }
+            return true;
         }
 
         /** Whether this has given up, or has already seen all eight. */

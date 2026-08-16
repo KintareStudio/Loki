@@ -90,8 +90,9 @@ public class LegacyStreamsTest {
         byte[] packet = concat(new byte[]{LegacyProtocol.LOGIN,
                 (byte) (protocol >> 24), (byte) (protocol >> 16),
                 (byte) (protocol >> 8), (byte) protocol}, string("Probe", wide));
-        // The earliest Alpha ends after the password, with nothing spare behind it.
-        if (strings == 0) return concat(packet, string("Password", wide));
+        // The earliest Alpha ends after the password, with nothing behind it — which is why the
+        // password itself is where its marker goes.
+        if (strings == 0 || strings == 3) return concat(packet, string("Password", wide));
         if (strings >= 2) packet = concat(packet, string(protocol >= 28 ? "" : "Password", wide));
         return concat(packet, new byte[]{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0});
     }
@@ -327,17 +328,26 @@ public class LegacyStreamsTest {
         System.out.println();
         System.out.println("== every shape below 1.7, as its own client sends it ==");
         String[][] measured = {
-            // version, protocol, wide, strings before the eight bytes
-            {"a1.2.0",  "3",  "no",  "2"},
-            {"b1.4_01", "10", "no",  "2"},
-            {"b1.5_01", "11", "yes", "1"},
-            {"b1.8.1",  "17", "yes", "1"},
-            {"1.1",     "23", "yes", "1"},
-            {"1.2.5",   "29", "yes", "2"},
-            // Protocol 14 twice over: a1.0.16 writes a byte a character and has no seed to spare,
-            // b1.7.3 writes two and does. Only the encoding tells them apart.
-            {"a1.0.16", "14", "no",  "0"},
-            {"b1.7.3",  "14", "yes", "1"},
+            // version, protocol, wide, strings before the eight bytes, and whether a handshake comes first
+            {"a1.2.0",  "3",  "no",  "2", "yes"},
+            {"b1.4_01", "10", "no",  "2", "yes"},
+            {"b1.5_01", "11", "yes", "1", "yes"},
+            {"b1.8.1",  "17", "yes", "1", "yes"},
+            {"1.1",     "23", "yes", "1", "yes"},
+            {"1.2.5",   "29", "yes", "2", "yes"},
+            // The earliest Alpha has no seed at all: its login packet ends after the password, so
+            // the password's own eight characters are the space.
+            {"a1.1.2_01", "2", "no", "3", "yes"},
+            // Protocol 10 twice over, and this pair is the dangerous one: b1.4_01 is 10 and so is
+            // a1.0.11, which has no seed and no handshake either. Read as b1.4_01 it would be
+            // looking for eight bytes past the end of its own login packet.
+            {"a1.0.11", "10", "no", "3", "no"},
+            {"a1.0.14", "12", "no", "3", "no"},
+            // Protocol 14 twice over: a1.0.16 writes a byte a character and keeps its marker in the
+            // password, b1.7.3 writes two and keeps it in the seed. Only the encoding tells them
+            // apart, and getting it wrong would put the marker in the wrong field of the wrong era.
+            {"a1.0.16", "14", "no",  "3", "yes"},
+            {"b1.7.3",  "14", "yes", "1", "yes"},
         };
 
         for (int v = 0; v < measured.length; v++) {
@@ -346,9 +356,11 @@ public class LegacyStreamsTest {
             boolean wide = "yes".equals(measured[v][2]);
             int strings = Integer.parseInt(measured[v][3]);
 
-            byte[] handshake = handshake(version.startsWith("1.2") ? "Probe;127.0.0.1:25733" : "Probe", wide);
             byte[] login = login(protocol, wide, strings);
-            byte[] whole = concat(handshake, login);
+            // Until a1.0.16 there is no handshake, and the login packet is the first thing sent.
+            byte[] whole = "no".equals(measured[v][4]) ? login
+                    : concat(handshake(version.startsWith("1.2") ? "Probe;127.0.0.1:25733" : "Probe",
+                            wide), login);
 
             for (int c = 0; c < chunks.length; c++) {
                 ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -364,14 +376,18 @@ public class LegacyStreamsTest {
                     check(version + ": has nowhere to put a marker, and none is put",
                             !flag.isMarked() && same(whole, sent), null);
                 } else {
-                    check(version + ": the marker lands where the seed was, and the server reads it",
-                            flag.isMarked(), null);
-                    // The packet was all zeros where the marker went, so exactly the marker's own
-                    // non-zero bytes are the ones that changed. One more or one fewer means it
-                    // landed somewhere it should not have.
+                    check(version + ": the marker lands in the field it was meant for, "
+                            + "and the server reads it", flag.isMarked(), null);
+                    // Over a seed the packet was all zeros there, so exactly the marker's own
+                    // non-zero bytes changed; over the password every one of the eight did, since
+                    // no letter of "Password" is a letter of the marker. Either way the count is
+                    // exact, and one more or one fewer means it landed somewhere else.
+                    int expected = strings == 3
+                            ? LegacyProtocol.PASSWORD_MARKER.length
+                            : nonZero(LegacyProtocol.LOGIN_MARKER);
                     check(version + ": and nothing outside those eight bytes moved",
-                            differences(whole, sent) == nonZero(LegacyProtocol.LOGIN_MARKER),
-                            differences(whole, sent) + " bytes differ");
+                            differences(whole, sent) == expected,
+                            differences(whole, sent) + " bytes differ, wanted " + expected);
                 }
             }
         }

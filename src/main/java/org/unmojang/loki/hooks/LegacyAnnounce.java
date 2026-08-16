@@ -232,6 +232,11 @@ public final class LegacyAnnounce {
                 };
                 OutputStream appended = LegacyStreams.appendAfter(out, LegacyStreams.constant(0),
                         LegacyProtocol.ENCRYPTION_REQUEST, source, markOf(socket));
+                // Until a1.0.16 there is no handshake either way, so the server's first packet is
+                // its login reply and the block goes in front of it. It knows by then who it is
+                // talking to, because the client's login is the first thing it read.
+                appended = LegacyStreams.appendAfter(appended, LegacyStreams.constant(0),
+                        LegacyProtocol.LOGIN, source, markOf(socket));
                 return LegacyStreams.appendAfter(appended, LegacyStreams.afterHandshake(),
                         LegacyProtocol.HANDSHAKE, source, markOf(socket));
             }

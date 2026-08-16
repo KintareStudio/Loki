@@ -289,6 +289,14 @@ public final class LegacyStreams {
                 if (done || !applicable) return b;
                 if (!inLogin) {
                     if (seen < head.length) head[seen] = b;
+                    if (seen == 0 && b == LegacyProtocol.LOGIN) {
+                        // No handshake at all, which is how it was until a1.0.16: the login packet
+                        // is the first thing sent. Those versions write a byte a character, so the
+                        // walk is told so rather than reading it off a handshake that never came.
+                        inLogin = true;
+                        walk = new LegacyProtocol.LoginWalk(false, false);
+                        return filter(b);
+                    }
                     if (seen == 0 && b != LegacyProtocol.HANDSHAKE) {
                         applicable = false; // not a handshake, so not a game connection of this era
                         return b;
@@ -303,24 +311,25 @@ public final class LegacyStreams {
                         inLogin = true;
                         // The login packet writes its strings the way the handshake wrote its own,
                         // so the walk is told which of the two that was.
-                        walk = new LegacyProtocol.LoginWalk(LegacyProtocol.isWide(head));
+                        walk = new LegacyProtocol.LoginWalk(LegacyProtocol.isWide(head), true);
                         seen = 0;
                     }
                     return b;
                 }
 
-                // Only over zeros. A client sends the seed as zero because it has no seed to send,
-                // so anything else there means this packet is not shaped the way the walk read it,
-                // and writing into it would corrupt the connection. Refusing costs a declaration;
-                // being wrong costs the login.
+                // Only over what was expected to be there: zeros for a seed a client has no value
+                // for, and the letters of "Password" for the field that stands in its place in the
+                // earliest Alpha. Anything else means this packet is not shaped the way the walk
+                // read it, and writing into it would corrupt the connection. Refusing costs a
+                // declaration; being wrong costs the login.
                 int index = walk.step(b);
                 byte written = b;
                 if (index >= 0) {
-                    if (b != 0) {
+                    if (b != walk.expectedAt(index)) {
                         done = true; // not the field this was looking for
                         return b;
                     }
-                    written = LegacyProtocol.LOGIN_MARKER[index];
+                    written = walk.markerAt(index);
                 }
                 if (walk.isStopped()) done = true;
                 return written;
@@ -469,6 +478,12 @@ public final class LegacyStreams {
                 if (done || !applicable) return;
                 if (!inLogin) {
                     if (seen < head.length) head[seen] = b;
+                    if (seen == 0 && b == LegacyProtocol.LOGIN) {
+                        inLogin = true; // no handshake, as it was until a1.0.16
+                        walk = new LegacyProtocol.LoginWalk(false, false);
+                        inspect(b);
+                        return;
+                    }
                     if (seen == 0 && b != LegacyProtocol.HANDSHAKE) {
                         applicable = false;
                         return;
@@ -483,7 +498,7 @@ public final class LegacyStreams {
                         inLogin = true;
                         // The login packet writes its strings the way the handshake wrote its own,
                         // so the walk is told which of the two that was.
-                        walk = new LegacyProtocol.LoginWalk(LegacyProtocol.isWide(head));
+                        walk = new LegacyProtocol.LoginWalk(LegacyProtocol.isWide(head), true);
                         seen = 0;
                     }
                     return;
@@ -492,9 +507,7 @@ public final class LegacyStreams {
                 int index = walk.step(b);
                 if (index >= 0) {
                     seed[index] = b;
-                    if (index == seed.length - 1 && LegacyProtocol.isLoginMarker(seed, 0)) {
-                        marked.mark();
-                    }
+                    if (index == seed.length - 1 && walk.isMarker(seed)) marked.mark();
                 }
                 if (walk.isStopped()) done = true;
             }

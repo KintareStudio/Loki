@@ -9,7 +9,9 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.Signature;
 import java.util.Base64;
+import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.UUID;
 
 /**
@@ -128,6 +130,36 @@ public class StubYggdrasil {
         return body.toString();
     }
 
+    /** Server ids that were joined, and by whom, so hasJoined can answer honestly. */
+    private final Map<String, String> joined = new ConcurrentHashMap<String, String>();
+
+    private static byte[] readAll(java.io.InputStream in) throws IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int read;
+        while ((read = in.read(buffer)) > 0) out.write(buffer, 0, read);
+        return out.toByteArray();
+    }
+
+    /** The value of a JSON string field, without a parser for the four fields this needs. */
+    private static String between(String json, String field) {
+        int at = json.indexOf(field);
+        if (at < 0) return null;
+        int open = json.indexOf('"', at + field.length() + 1);
+        int close = open < 0 ? -1 : json.indexOf('"', open + 1);
+        return close < 0 ? null : json.substring(open + 1, close);
+    }
+
+    private static String valueOf(String query, String key) {
+        if (query == null) return null;
+        String[] pairs = query.split("&");
+        for (int i = 0; i < pairs.length; i++) {
+            int eq = pairs[i].indexOf('=');
+            if (eq > 0 && pairs[i].substring(0, eq).equals(key)) return pairs[i].substring(eq + 1);
+        }
+        return null;
+    }
+
     private static void send(HttpExchange exchange, int status, String body) throws IOException {
         byte[] bytes = body.getBytes("UTF-8");
         exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -154,6 +186,34 @@ public class StubYggdrasil {
                     send(exchange, 200, metadataJson());
                 } else if ("/minecraftservices/publickeys".equals(path)) {
                     send(exchange, 200, publicKeysJson());
+                } else if ("/sessionserver/session/minecraft/join".equals(path)) {
+                    // What a client's join becomes once Loki has translated it. The body carries
+                    // the token, the profile and the server id; a real one would check the token,
+                    // and this one does too, because a test that accepts anything proves nothing.
+                    String body = new String(readAll(exchange.getRequestBody()), "UTF-8");
+                    if (body.indexOf(token) < 0) {
+                        send(exchange, 403, "{\"error\":\"ForbiddenOperationException\"}");
+                        return;
+                    }
+                    String serverId = between(body, "\"serverId\"");
+                    if (serverId == null) {
+                        send(exchange, 400, "{\"error\":\"no serverId\"}");
+                        return;
+                    }
+                    joined.put(serverId, name);
+                    exchange.sendResponseHeaders(204, -1);
+                    exchange.close();
+                } else if (path.startsWith("/sessionserver/session/minecraft/hasJoined")) {
+                    // And what a server's check becomes. Answering only for a server id that was
+                    // actually joined is what makes the two halves a test rather than two stubs.
+                    String query = exchange.getRequestURI().getQuery();
+                    String serverId = valueOf(query, "serverId");
+                    if (serverId == null || !name.equals(joined.get(serverId))) {
+                        exchange.sendResponseHeaders(204, -1);
+                        exchange.close();
+                        return;
+                    }
+                    send(exchange, 200, profileJson());
                 } else if (path.startsWith("/sessionserver/session/minecraft/profile/")) {
                     String asked = path.substring(path.lastIndexOf('/') + 1);
                     if (!dashless(uuid).equalsIgnoreCase(asked.replace("-", ""))) {

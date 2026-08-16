@@ -84,7 +84,11 @@ loki_jdk() {
 # a0.2.8, and Classic clients by the c1.x line. That is why this is a table and not a rule.
 loki_legacy_server_url() {
     case $1 in
+        1.1)    echo "https://files.betacraft.uk/server-archive/release/1.1/1.1.jar" ;;
+        1.0)    echo "https://files.betacraft.uk/server-archive/release/1.0/1.0.0.jar" ;;
         b1.8.1) echo "https://files.betacraft.uk/server-archive/beta/b1.8.1.jar" ;;
+        b1.6.6) echo "https://files.betacraft.uk/server-archive/beta/b1.6.6.jar" ;;
+        b1.5_01) echo "https://files.betacraft.uk/server-archive/beta/b1.5_01.jar" ;;
         b1.8)   echo "https://files.betacraft.uk/server-archive/beta/b1.8.jar" ;;
         b1.7.3) echo "https://files.betacraft.uk/server-archive/beta/b1.7.3.jar" ;;
         a0.2.8) echo "https://files.betacraft.uk/server-archive/alpha/a0.2.8.jar" ;;

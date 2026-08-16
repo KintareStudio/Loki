@@ -39,6 +39,9 @@ public class BetaClient {
         String host = args[0];
         int port = Integer.parseInt(args[1]);
         String username = args.length > 2 ? args[2] : "Tester";
+        // No ping to ask in this era, so the caller says which protocol the server speaks. Getting
+        // it wrong is answered with "Outdated server!" and a disconnect, not with a hint.
+        int protocol = Integer.parseInt(System.getProperty("beta.protocol", "17"));
 
         Socket socket = new Socket();
         try {
@@ -54,11 +57,31 @@ public class BetaClient {
 
             int replyId = in.read();
             System.out.println("reply=" + Integer.toHexString(replyId));
-            System.out.println("hash=" + (replyId == 0x02 ? readString(in) : "?"));
+            String hash = replyId == 0x02 ? readString(in) : "?";
+            System.out.println("hash=" + hash);
+
+            // What the game does between the handshake and the login when the server is in online
+            // mode: tell its own session server that it is joining this one. Loki turns this into a
+            // modern POST /session/minecraft/join, so a legacy client can authenticate against an
+            // API server that has never heard of joinserver.jsp.
+            if (args.length > 3 && !"-".equals(hash)) {
+                String token = args[3];
+                String uuid = args.length > 4 ? args[4] : "";
+                String joinUrl = "http://session.minecraft.net/game/joinserver.jsp"
+                        + "?user=" + username
+                        + "&sessionId=token:" + token + ":" + uuid
+                        + "&serverId=" + hash;
+                java.net.HttpURLConnection conn =
+                        (java.net.HttpURLConnection) new java.net.URI(joinUrl).toURL().openConnection();
+                conn.setConnectTimeout(5000);
+                conn.setReadTimeout(5000);
+                System.out.println("joined=" + conn.getResponseCode());
+                conn.disconnect();
+            }
 
             // The login packet, where the map seed is the eight bytes a Loki client overwrites
             out.writeByte(0x01);
-            out.writeInt(17); // protocol version
+            out.writeInt(protocol);
             writeString(out, username);
             out.writeLong(0L);
             out.writeInt(0);

@@ -216,9 +216,14 @@ this. It works on both sides of 1.7:
 
 - **1.7 and up**: the proxy's own status response carries the declaration, the same as a server's.
   Measured on BungeeCord 26.1 and Velocity 4.0.0.
-- **1.3 to 1.6.4**: the proxy reads the marker off the handshake it has already decoded and answers
-  the plugin message itself. Measured on the BungeeCord builds of that era, with a backend running
-  no Loki at all.
+- **1.3 to 1.6.4**: the proxy reads the marker off the client's handshake and answers the plugin
+  message itself. Measured on the BungeeCord builds of that era, with a backend running no Loki at
+  all.
+
+That second one is hooked below Netty rather than inside it — on the NIO channel the proxy's Netty
+is itself reading from. It has to be: proxies old enough to serve those versions are old enough to
+carry a Netty whose handler API was replaced in 2013, and Loki cannot install a handler in it at
+all. Underneath is the one place every one of them looks the same.
 
 If you would rather the marker never left your client at all:
 

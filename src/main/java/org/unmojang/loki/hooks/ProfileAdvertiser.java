@@ -1,6 +1,5 @@
 package org.unmojang.loki.hooks;
 
-import org.unmojang.loki.util.LegacyProtocol;
 import org.unmojang.loki.util.NettyBridge;
 import org.unmojang.loki.util.Protocol;
 import org.unmojang.loki.util.logger.NilLogger;
@@ -189,47 +188,6 @@ public final class ProfileAdvertiser {
             return reader.ok() && reader.position() == bytes.length && value > 0;
         }
 
-        /**
-         * Answers a 1.3 to 1.6.4 client that marked itself, on a program that has no sockets to
-         * filter.
-         * <p>
-         * Everywhere else the pre-1.7 announcement lives on {@code java.net.Socket}, because that is
-         * what the games of that era use. A proxy does not: it is a Netty program speaking a
-         * protocol that predates Netty, so those filters never meet its connections and a player
-         * behind one was never told anything. This is the same exchange in the one place a proxy
-         * does pass through — the accepted channel, before anything has been written to it.
-         * <p>
-         * The proxy is arguably where this belongs anyway. Its address is the one the player typed,
-         * and therefore the one the client keys the override on, and a network behind a proxy
-         * usually has one API server that the proxy already knows about.
-         */
-        private static void declareToLegacyClient(Object ctx, Object sample, byte[] frame) {
-            // A handshake of that era opens with its packet id, where a modern one opens with the
-            // length of its frame. Asked first so that a 1.7 login connection — which reaches here
-            // too, being a handshake that is not a ping — is recognised as none of this by its
-            // first byte rather than by failing to find a marker at the end.
-            if (frame.length == 0 || frame[0] != LegacyProtocol.HANDSHAKE) return;
-            if (!LegacyProtocol.hasHostMarker(frame, frame.length)) return;
-            try {
-                // Braced here, because declaration() gives the fields on their own: everywhere else
-                // they are spliced into a status document that already has the braces around them,
-                // and on this path they are the whole of what is sent.
-                String fields = declaration();
-                if (fields == null) return;
-                byte[] block = LegacyProtocol.PLUGIN_MESSAGE.frame("{" + fields + "}");
-                if (block == null) return;
-                // Written from the head of the pipeline, so it reaches the client as the bytes they
-                // are rather than as something the proxy would encode again. The client takes them
-                // back out before the game sees them, and a client that did not mark itself never
-                // gets here to begin with.
-                NettyBridge.call(ctx, "writeAndFlush",
-                        new Object[]{NettyBridge.wrapBytes(sample, block)});
-                log.info("Declaring this proxy's profile endpoints to a pre-1.7 Loki client");
-            } catch (Throwable t) {
-                log.debug("Could not declare to a pre-1.7 client (" + t + ")");
-            }
-        }
-
         public Object inbound(Object ctx, Object msg) {
             if (decided) return msg;
             decided = true;
@@ -251,7 +209,6 @@ public final class ProfileAdvertiser {
                 log.trace("Inbound handshake: ok=" + reader.ok() + " packet=" + packetId
                         + " nextState=" + nextState + " frame=" + frame.length + " bytes");
 
-                if (!isStatus) declareToLegacyClient(ctx, msg, frame);
             } catch (Throwable t) {
                 log.debug("Could not read an inbound handshake (" + t + ")");
             }

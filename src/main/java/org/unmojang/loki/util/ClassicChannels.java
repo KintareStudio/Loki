@@ -59,6 +59,19 @@ public final class ClassicChannels {
         boolean decided;
         /** Set while the block itself is going out, so the hook does not meet its own bytes. */
         boolean sending;
+
+        /**
+         * Which of the two protocols this connection is, once its first byte has said so.
+         * <p>
+         * Both reach this class for the same reason: neither goes anywhere near a socket's streams.
+         * Classic because it never did, and 1.3 to 1.6.4 when a proxy is serving it — a proxy being
+         * a Netty program speaking a protocol older than Netty, so the stream filters that handle
+         * that era on a real server never meet its connections.
+         */
+        int shape = UNKNOWN;
+        /** Server, 1.3 to 1.6.4: the handshake as it arrives, since it may come in pieces. */
+        byte[] handshake = new byte[512];
+        int handshakeLength;
         /** Client: what the server declared, picked up by whoever asks next. */
         public String declaration;
         /**
@@ -84,6 +97,13 @@ public final class ClassicChannels {
     }
 
     private static final NilLogger log = NilLogger.get("Loki");
+
+    /** Not yet said which protocol this is. */
+    public static final int UNKNOWN = 0;
+    /** Classic: an identification packet, and the marker in its trailing byte. */
+    public static final int CLASSIC = 1;
+    /** 1.3 to 1.6.4: a handshake, and the marker on the end of its host. */
+    public static final int MODERN = 2;
 
     /** What a client that speaks to us is asked to write, and what a server looks for. */
     private static final int MARKER_AT = LegacyProtocol.CLASSIC_MARKER_OFFSET;
@@ -134,13 +154,19 @@ public final class ClassicChannels {
             return false;
         }
         if (conn.pending == null) {
-            byte[] block = LegacyProtocol.payload(writer.declaration());
+            // Raw bytes on Classic, where nothing sits in the middle of a connection, and a plugin
+            // message from 1.3, where something is reading everything that goes past — which on
+            // this path is certain, since the only reason a connection of that era gets here is
+            // that a proxy is serving it.
+            LegacyProtocol.Block framing = conn.shape == MODERN
+                    ? LegacyProtocol.PLUGIN_MESSAGE : LegacyProtocol.RAW;
+            byte[] block = framing.frame(writer.declaration());
             if (block == null) {
                 conn.blockSent = true;
                 return false;
             }
             conn.pending = ByteBuffer.wrap(block);
-            log.debug("Declaring to a Classic client that marked itself");
+            log.debug("Declaring to a client that marked itself, on a connection with no streams");
         }
 
         conn.sending = true;
@@ -196,10 +222,26 @@ public final class ClassicChannels {
         int from = dst.position() - read;
 
         if (conn.server) {
-            if (conn.read == 0 && dst.get(from) != LegacyProtocol.CLASSIC_IDENTIFICATION) {
-                conn.applicable = false;
+            if (conn.read == 0) {
+                // Which of the two shapes this is, decided once, by the only byte that tells them
+                // apart: Classic opens with an identification and 1.3 to 1.6.4 with a handshake.
+                byte first = dst.get(from);
+                if (first == LegacyProtocol.CLASSIC_IDENTIFICATION) {
+                    conn.shape = CLASSIC;
+                } else if (first == LegacyProtocol.HANDSHAKE) {
+                    conn.shape = MODERN;
+                } else {
+                    conn.applicable = false;
+                    return read;
+                }
+            }
+
+            if (conn.shape == MODERN) {
+                serverReadModern(conn, dst, read, from);
+                conn.read += read;
                 return read;
             }
+
             int ahead = MARKER_AT - conn.read;
             if (ahead >= 0 && ahead < read && dst.get(from + ahead) == LegacyProtocol.MARKER) {
                 conn.marked = true;
@@ -213,6 +255,35 @@ public final class ClassicChannels {
         // those have to go out before this steps aside for good.
         if (conn.decided && conn.heldLength == 0) return read;
         return clientRead(conn, dst, read, from);
+    }
+
+    /**
+     * Server side, 1.3 to 1.6.4: gathers the handshake and looks for the marker on its host.
+     * <p>
+     * Read-only, and it has to gather because a handshake carries two strings and does not have to
+     * arrive in one read. Nothing is altered: the marker stays on the host and reaches whatever is
+     * reading it above, which drops the host either way.
+     */
+    private static void serverReadModern(Conn conn, ByteBuffer dst, int read, int from) {
+        if (conn.marked || conn.handshake == null) return;
+
+        for (int i = 0; i < read && conn.handshakeLength < conn.handshake.length; i++) {
+            conn.handshake[conn.handshakeLength++] = dst.get(from + i);
+        }
+
+        int end = LegacyProtocol.modernHandshakeLength(conn.handshake, conn.handshakeLength);
+        if (end == LegacyProtocol.NOT_THIS_SHAPE
+                || conn.handshakeLength >= conn.handshake.length) {
+            conn.handshake = null; // not a handshake of this shape, or longer than one can be
+            return;
+        }
+        if (end < 0 || conn.handshakeLength < end) return; // still arriving
+
+        if (LegacyProtocol.hasHostMarker(conn.handshake, end)) {
+            conn.marked = true;
+            log.debug("A 1.3 to 1.6.4 client marked itself on this connection");
+        }
+        conn.handshake = null;
     }
 
     private static int clientRead(Conn conn, ByteBuffer dst, int read, int from) {

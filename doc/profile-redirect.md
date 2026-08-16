@@ -206,8 +206,21 @@ proxy is parsing that stream and raw bytes are not a packet in it.
 
 Whether the declaration survives the trip is a separate question from whether the connection does,
 and it depends on the proxy: one that rewrites the handshake for its own IP forwarding may leave the
-backend never knowing a Loki client was there. That costs a declaration, not a login. If you would
-rather the marker never left your client at all:
+backend never knowing a Loki client was there. That costs a declaration, not a login.
+
+**Put Loki on the proxy instead.** It is one `-javaagent:` on the thing players actually connect to,
+and it is where the declaration belongs: the proxy's address is the one the player typed, so it is
+the one the client keys the override on, and a network behind a proxy usually has one API server
+that the proxy already knows about. The servers behind it then need to know nothing about any of
+this. It works on both sides of 1.7:
+
+- **1.7 and up**: the proxy's own status response carries the declaration, the same as a server's.
+  Measured on BungeeCord 26.1 and Velocity 4.0.0.
+- **1.3 to 1.6.4**: the proxy reads the marker off the handshake it has already decoded and answers
+  the plugin message itself. Measured on the BungeeCord builds of that era, with a backend running
+  no Loki at all.
+
+If you would rather the marker never left your client at all:
 
 ```
 -DLoki.no_legacy_handshake_marker=true

@@ -229,7 +229,13 @@ EOF
             unset LOKI_AGENT_ARG
         fi
 
-        loki_start_server "$dir" harness "-javaagent:$(topath "$loki_agent_jar")=$api_root" \
+        # With Loki on the proxy the backend is left plain on purpose, because that is the whole
+        # claim being tested: on a proxied network the operator installs Loki once, on the thing
+        # players connect to, and the servers behind it need know nothing about any of this.
+        backend_agent="-javaagent:$(topath "$loki_agent_jar")=$api_root"
+        [ -n "$LOKI_PROXY_AGENT" ] && backend_agent=""
+
+        loki_start_server "$dir" harness $backend_agent \
             || { fail "$version server did not start"; continue; }
 
         if ! start_proxy; then
@@ -300,7 +306,15 @@ EOF
         fi
 
         if [ "$mode" = loki ]; then
-            if grep -q "Server declared where profiles come from" "$marker"; then
+            if [ -n "$LOKI_PROXY_AGENT" ]; then
+                # Here it is not a nicety: the proxy is the only thing running Loki, so if the
+                # client is not told, nothing told it.
+                if grep -q "Profiles will be answered by" "$marker"; then
+                    ok "and the proxy told it where profiles come from"
+                else
+                    fail "the proxy declared nothing to a marked client, see $marker"
+                fi
+            elif grep -q "Server declared where profiles come from" "$marker"; then
                 note "the declaration survived the trip"
             else
                 note "the declaration did not survive the proxy, which costs a declaration only"

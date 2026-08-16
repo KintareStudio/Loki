@@ -45,6 +45,8 @@ public class NettyRig {
     private static final String ANCHOR = "io/netty/bootstrap/AbstractBootstrap.class";
 
     private static int failures = 0;
+    /** Whether to answer the way a proxy does, in two writes rather than one. */
+    private static boolean split = false;
 
     private static void check(String label, boolean ok) {
         if (!ok) failures++;
@@ -126,6 +128,8 @@ public class NettyRig {
     public static void main(String[] args) throws Exception {
         File jarFile = new File(args[0]);
         int port = Integer.parseInt(args[1]);
+        // "split" answers the way a proxy does, with the frame's length in a buffer of its own
+        split = args.length > 2 && "split".equals(args[2]);
         // The server declares its own session endpoint, which is what it would have been given
         System.setProperty("minecraft.api.session.host", API_ROOT + "/sessionserver");
 
@@ -157,12 +161,35 @@ public class NettyRig {
                     new NettyBridge.PeekAdapter() {
                         public Object inbound(Object ctx, Object msg) {
                             try {
-                                Object buf = NettyBridge.wrapBytes(msg, Protocol.statusResponse(STATUS));
-                                NettyBridge.call(ctx, "writeAndFlush", new Object[]{buf});
+                                byte[] frame = Protocol.statusResponse(STATUS);
+                                if (split) {
+                                    // The way Velocity writes it: the length prefix in a buffer of
+                                    // its own and the packet in the next one, which an encoder that
+                                    // would rather not copy has every reason to do. Loki read the
+                                    // first of those as a whole frame and gave up on it, so the
+                                    // declaration never went out.
+                                    int at = 0;
+                                    while ((frame[at] & 0x80) != 0) at++;
+                                    at++;
+                                    write(ctx, msg, frame, 0, at);
+                                    write(ctx, msg, frame, at, frame.length - at);
+                                    NettyBridge.call(ctx, "flush", new Object[0]);
+                                } else {
+                                    Object buf = NettyBridge.wrapBytes(msg, frame);
+                                    NettyBridge.call(ctx, "writeAndFlush", new Object[]{buf});
+                                }
                             } catch (Exception e) {
                                 e.printStackTrace();
                             }
                             return msg;
+                        }
+
+                        private void write(Object ctx, Object sample, byte[] all, int at, int length)
+                                throws Exception {
+                            byte[] piece = new byte[length];
+                            System.arraycopy(all, at, piece, 0, length);
+                            NettyBridge.call(ctx, "write",
+                                    new Object[]{NettyBridge.wrapBytes(sample, piece)});
                         }
                     });
             serverBootstrap.getMethod("childHandler", channelHandler).invoke(bootstrap, responder);

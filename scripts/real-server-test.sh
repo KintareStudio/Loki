@@ -113,6 +113,19 @@ case $rig_status in
     *) fail "the netty rig failed, see $work/rig.log" ;;
 esac
 
+# Again, with the answer written the way a proxy writes it: the frame's length in a buffer of its
+# own, and the packet in the next one. Velocity does that, and Loki used to read the first of those
+# as a whole frame, give up on it, and let the response through undeclared.
+say "netty rig, answering in two writes"
+rig_status=0
+"$loki_java_bin" -cp "$classpath" NettyRig "$(topath "$work/server.jar")" "$((port + 2))" split \
+    2>>"$work/rig.log" || rig_status=$?
+case $rig_status in
+    0) ;;
+    3) say "  rig skipped for this version" ;;
+    *) fail "the netty rig failed on a split frame, see $work/rig.log" ;;
+esac
+
 loki_write_server_dir "$work" "$port"
 
 say "starting without Loki, as a control"

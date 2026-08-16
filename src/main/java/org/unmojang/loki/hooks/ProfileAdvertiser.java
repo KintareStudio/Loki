@@ -161,6 +161,19 @@ public final class ProfileAdvertiser {
     private static final class Rewriter extends NettyBridge.PeekAdapter {
         private boolean isStatus;
         private boolean decided;
+        /** Whether the frame's length has already gone past on its own. */
+        private boolean lengthSeen;
+
+        /**
+         * Whether these bytes are a variable-length integer and nothing else, which is what a
+         * length prefix written by itself looks like.
+         */
+        private static boolean isBareVarInt(byte[] bytes) {
+            if (bytes.length == 0 || bytes.length > 5) return false;
+            Protocol.Reader reader = new Protocol.Reader(bytes, 0);
+            int value = reader.varInt();
+            return reader.ok() && reader.position() == bytes.length && value > 0;
+        }
 
         public Object inbound(Object ctx, Object msg) {
             if (decided) return msg;
@@ -193,10 +206,26 @@ public final class ProfileAdvertiser {
             if (!isStatus) return msg;
             try {
                 byte[] frame = NettyBridge.peekBytes(msg, MAX_FRAME_BYTES);
-                if (frame == null) return msg;
+                if (frame == null) {
+                    log.trace("Outbound message is not readable bytes: "
+                            + (msg == null ? "null" : msg.getClass().getName()));
+                    return msg;
+                }
+
+                // A frame does not have to arrive in one piece. Velocity writes the length prefix
+                // in a buffer of its own and the packet in the next one, which is not a quirk to
+                // work around so much as the shape of an encoder that would rather not copy. When
+                // that is what this is, the length is let go as nothing and the packet that follows
+                // is rewritten into a whole frame, length and all.
+                if (!lengthSeen && isBareVarInt(frame)) {
+                    lengthSeen = true;
+                    Object empty = NettyBridge.wrapBytes(msg, new byte[0]);
+                    NettyBridge.release(msg);
+                    return empty;
+                }
 
                 Protocol.Reader reader = new Protocol.Reader(frame, 0);
-                reader.varInt(); // frame length
+                if (!lengthSeen) reader.varInt(); // the length is here, at the front of the frame
                 int packetId = reader.varInt();
                 if (!reader.ok() || packetId != Protocol.PACKET_STATUS_RESPONSE) return msg;
 

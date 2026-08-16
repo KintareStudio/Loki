@@ -102,13 +102,16 @@ for version in $versions; do
         # "verify-names" — and it heartbeats to a website that no longer exists unless told not to.
         if [ -f "$dir/server.jar" ] && "$jdk/bin/jar" tf "$(topath "$dir/server.jar")" 2>/dev/null \
                 | grep -q "^com/mojang/minecraft/server/MinecraftServer.class$"; then
-            # Name verification stays off in both passes here, unlike every other era. Classic does
-            # not authenticate against a session server at all: the client is handed an mppass by
-            # the website that launched it, computed from a salt the server published in a heartbeat
-            # to a site that has not existed for a decade. There is nothing for a token to do in it,
-            # and the announcement does not go anywhere near it.
-            printf 'port=%s\nverify-names=false\npublic=false\nmax-players=4\nmax-connections=3\nserver-name=Loki test\nmotd=Loki test\ngrow-trees=false\n' \
-                "$port" > "$dir/server.properties"
+            # Classic authenticates too, by a route of its own: the server publishes a salt in a
+            # heartbeat, and the client is handed an mppass computed from it. Loki redirects both
+            # ends of that at the API server, so the run with Loki verifies names for real — the
+            # heartbeat has to arrive, the token has to be accepted, and the md5 has to match — and
+            # the run without it cannot, having no Loki to fetch an mppass with.
+            #
+            # public=true only so the server bothers to heartbeat at all. It goes to the API server,
+            # not to a website.
+            printf 'port=%s\nverify-names=%s\npublic=%s\nmax-players=4\nmax-connections=3\nserver-name=Loki test\nmotd=Loki test\ngrow-trees=false\n' \
+                "$port" "$online" "$online" > "$dir/server.properties"
         else
             printf 'server-port=%s\nonline-mode=%s\nlevel-name=w\nmax-players=4\n' "$port" "$online" \
                 > "$dir/server.properties"

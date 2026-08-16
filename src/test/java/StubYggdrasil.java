@@ -142,6 +142,38 @@ public class StubYggdrasil {
     }
 
     /** The value of a JSON string field, without a parser for the four fields this needs. */
+    /** What a Classic server told us its salt was, kept by the port it is listening on. */
+    private final java.util.Map<String, String> salts =
+            java.util.Collections.synchronizedMap(new java.util.HashMap<String, String>());
+
+    private static String param(String query, String name) {
+        if (query == null) return null;
+        String[] pairs = query.split("&");
+        for (int i = 0; i < pairs.length; i++) {
+            int is = pairs[i].indexOf('=');
+            if (is > 0 && pairs[i].substring(0, is).equals(name)) {
+                try {
+                    return java.net.URLDecoder.decode(pairs[i].substring(is + 1), "UTF-8");
+                } catch (Exception e) {
+                    return pairs[i].substring(is + 1);
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The mppass is the md5 of a salt and a name, which is all Classic ever asked of it. */
+    private static String md5Hex(String value) throws Exception {
+        byte[] digest = java.security.MessageDigest.getInstance("MD5").digest(value.getBytes("UTF-8"));
+        StringBuilder hex = new StringBuilder();
+        for (int i = 0; i < digest.length; i++) {
+            String one = Integer.toHexString(digest[i] & 0xFF);
+            if (one.length() == 1) hex.append('0');
+            hex.append(one);
+        }
+        return hex.toString();
+    }
+
     private static String between(String json, String field) {
         int at = json.indexOf(field);
         if (at < 0) return null;
@@ -186,6 +218,40 @@ public class StubYggdrasil {
                     send(exchange, 200, metadataJson());
                 } else if ("/minecraftservices/publickeys".equals(path)) {
                     send(exchange, 200, publicKeysJson());
+                } else if ("/sessionserver/heartbeat.jsp".equals(path)) {
+                    // How a Classic server says it exists, and — the part that matters here — what
+                    // it will be checking mppasses against. Its salt is its own; the API only has
+                    // to remember it, so that a client asking later can be given a matching one.
+                    // Either way round: a server of that age may put its parameters in the query
+                    // or post them as a form, and c1.10 posts them.
+                    String query = exchange.getRequestURI().getQuery();
+                    String body = new String(readAll(exchange.getRequestBody()), "UTF-8");
+                    String salt = param(query, "salt");
+                    if (salt == null) salt = param(body, "salt");
+                    String port = param(query, "port");
+                    if (port == null) port = param(body, "port");
+                    if (salt != null && port != null) {
+                        salts.put(port, salt);
+                        System.out.println("[" + label + "] heartbeat: port " + port
+                                + " salted " + salt);
+                    }
+                    send(exchange, 200, "http://example.invalid/play?" + salt);
+                } else if ("/sessionserver/mppass".equals(path)) {
+                    // And how a Classic client gets one. A real server has already worked out what
+                    // it expects — md5 of its salt and the player's name — so this has to arrive at
+                    // the same answer from the salt it was told and the player the token belongs to.
+                    String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+                    if (authorization == null || authorization.indexOf(token) < 0) {
+                        send(exchange, 403, "who?");
+                        return;
+                    }
+                    String port = param(exchange.getRequestURI().getQuery(), "port");
+                    String salt = port == null ? null : salts.get(port);
+                    if (salt == null) {
+                        send(exchange, 404, "no server heartbeat for port " + port);
+                        return;
+                    }
+                    send(exchange, 200, md5Hex(salt + name));
                 } else if ("/sessionserver/session/minecraft/join".equals(path)) {
                     // What a client's join becomes once Loki has translated it. The body carries
                     // the token, the profile and the server id; a real one would check the token,

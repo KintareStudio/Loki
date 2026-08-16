@@ -141,10 +141,17 @@ Two things happen, and both fail towards doing nothing:
    makes a packet longer than it was, except from 1.3, where the field is a counted string and the
    count is updated with it. A server without Loki reads the field and ignores it, exactly as it
    ignored what was there before.
-2. **The server answers with a block** — `0xFE 'L' 'O' 'K'`, a length, and the declaration as UTF-8 —
-   and only to a client that marked itself. The client takes it back out before the game reads a byte
-   of it, so the game sees a protocol that has not changed. A client without Loki never marks itself,
-   is never sent a block, and cannot tell the difference.
+2. **The server answers with a block**, and only to a client that marked itself. The client takes it
+   back out before the game reads a byte of it, so the game sees a protocol that has not changed. A
+   client without Loki never marks itself, is never sent a block, and cannot tell the difference.
+
+   How that block is framed depends on whether anything might be reading the connection. Below 1.3
+   it is raw bytes — `0xFE 'L' 'O' 'K'`, a length, and the declaration as UTF-8 — because a
+   connection of that age is a wire between two programs and nothing sits in the middle of it. From
+   1.3 there are proxies, and a proxy decodes every packet in both directions to decide where to
+   send it, so the same declaration travels in a **plugin message** instead: `0xFA`, the channel
+   `Loki`, a length, and the same UTF-8. A proxy decodes that like any other packet and either
+   forwards it or drops it; either way the connection survives, which raw bytes could not promise.
 
 Where the mark goes depends on the version, and there are more shapes down there than eras:
 
@@ -183,8 +190,24 @@ exists to check them against.
 
 From 1.3 the login packet has no username at all, and the mark moves to the host: the address the
 client says it dialled, which the server already knows and drops. That is the field Forge has
-appended `\0FML\0` to since the same release. It is also the only part of this a proxy can see, since
-a proxy does read the host:
+appended `\0FML\0` to since the same release.
+
+### Behind a proxy
+
+It is also the only part of this a proxy can see, since a proxy does read the host — so it was put
+in front of one and measured, with `scripts/proxy-test.sh`, using the BungeeCord builds that
+supported these versions. The marker goes through untouched: the host arrives at the backend with
+`\0Loki\0` still on the end of it, and the proxy has no more to say about a marked handshake than
+about an unmarked one.
+
+The block was the part that was not safe, and that is why it is a plugin message now. A raw block
+came back from BungeeCord as `Unknown packet id 79` — the `O` of `0xFE 'L' 'O' 'K'` — because a
+proxy is parsing that stream and raw bytes are not a packet in it.
+
+Whether the declaration survives the trip is a separate question from whether the connection does,
+and it depends on the proxy: one that rewrites the handshake for its own IP forwarding may leave the
+backend never knowing a Loki client was there. That costs a declaration, not a login. If you would
+rather the marker never left your client at all:
 
 ```
 -DLoki.no_legacy_handshake_marker=true

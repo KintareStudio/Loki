@@ -106,10 +106,14 @@ public final class LegacyAnnounce {
             // From 1.3 the block is the first thing a server writes, because by then it has read
             // the handshake the marker is in; before that it can only come after the handshake
             // reply, which is written before the login packet carrying the marker has been read.
+            // It is also a plugin message there rather than raw bytes, because from 1.3 there may
+            // be a proxy in between, and a proxy decodes what goes past it.
             InputStream stripped = LegacyStreams.stripAfter(in, LegacyStreams.constant(0),
-                    LegacyProtocol.PAYLOAD_MAGIC[0], sink);
+                    LegacyProtocol.PLUGIN_MESSAGE.firstByte(), sink, LegacyProtocol.PLUGIN_MESSAGE);
+            stripped = LegacyStreams.stripAfter(stripped, LegacyStreams.constant(0),
+                    LegacyProtocol.RAW.firstByte(), sink, LegacyProtocol.RAW);
             stripped = LegacyStreams.stripAfter(stripped, LegacyStreams.afterHandshake(),
-                    LegacyProtocol.HANDSHAKE, sink);
+                    LegacyProtocol.HANDSHAKE, sink, LegacyProtocol.RAW);
             return restoreOnClose(stripped, socket, declared);
         } catch (Throwable t) {
             log.debug("Not filtering this socket's input (" + t + ")");
@@ -328,14 +332,15 @@ public final class LegacyAnnounce {
                     }
                 };
                 OutputStream appended = LegacyStreams.appendAfter(out, LegacyStreams.constant(0),
-                        LegacyProtocol.ENCRYPTION_REQUEST, source, markOf(socket));
+                        LegacyProtocol.ENCRYPTION_REQUEST, source, markOf(socket),
+                        LegacyProtocol.PLUGIN_MESSAGE);
                 // Until a1.0.16 there is no handshake either way, so the server's first packet is
                 // its login reply and the block goes in front of it. It knows by then who it is
                 // talking to, because the client's login is the first thing it read.
                 appended = LegacyStreams.appendAfter(appended, LegacyStreams.constant(0),
-                        LegacyProtocol.LOGIN, source, markOf(socket));
+                        LegacyProtocol.LOGIN, source, markOf(socket), LegacyProtocol.RAW);
                 return LegacyStreams.appendAfter(appended, LegacyStreams.afterHandshake(),
-                        LegacyProtocol.HANDSHAKE, source, markOf(socket));
+                        LegacyProtocol.HANDSHAKE, source, markOf(socket), LegacyProtocol.RAW);
             }
             if (Boolean.getBoolean("Loki.no_legacy_handshake_marker")) {
                 return LegacyStreams.markBetaLogin(out);

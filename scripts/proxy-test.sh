@@ -18,13 +18,15 @@
 # than required — a proxy that rewrites the host is entitled to drop it, and dropping it costs a
 # declaration, not a login.
 #
-# KNOWN FAILURE, and the reason this script exists: 1.4.7 fails on the check that the proxy minds a
-# marked handshake no more than an unmarked one. The marker itself is fine — it reaches the backend
-# untouched — but the backend then answers with the block, and the block is raw bytes in a stream
-# that the proxy is decoding, so it comes back as "Unknown packet id 79", which is the O of
-# 0xFE 'L' 'O' 'K'. 1.6.4 escapes it only by accident: that build of BungeeCord sends a plugin
-# message of its own before the handshake, so Loki's server side stands down and never declares.
-# -DLoki.no_legacy_handshake_marker=true avoids the whole thing today.
+# What this found, and what it is now here to keep true: the marker is fine, and the block was not.
+# BungeeCord forwards the host to the backend byte for byte, marker and all. But the block used to
+# be raw bytes, and a proxy is parsing that stream, so it came back as "Unknown packet id 79" — the
+# O of 0xFE 'L' 'O' 'K' — and took the connection with it. From 1.3 the block is a plugin message
+# instead, which is a packet a proxy can decode and pass on or drop, and this run is what says so.
+#
+# The run without Loki is given an HTTP proxy that is not there. A client of this age fetches
+# s3.amazonaws.com/MinecraftResources while it connects, which stopped existing years ago; Loki
+# intercepts that request, so only the control is left waiting on it.
 #
 # EULA: this writes eula=true into the server directory it prepares.
 #
@@ -44,6 +46,32 @@ mkdir -p "$base"
 # The proxy runs in a subshell so that it can have its own working directory, which means the pid
 # held here is the shell's and not the JVM's. Killing only the shell leaves the proxy holding the
 # port, and the next run of it then reports that it never came up.
+# Starts the proxy in its own directory and waits until it says it is listening. Generous, and it
+# tries twice: a build this old prints an "outdated build" notice and then sits for fifteen seconds
+# before doing anything, and a port it held a moment ago may not be free yet.
+start_proxy() {
+    attempt=1
+    while [ $attempt -le 2 ]; do
+        (cd "$dir/proxy" && "$jdk/bin/java" -Xmx512M \
+            -cp "BungeeCord.jar$cp_sep$(topath "$loki_root/build/test-classes")" \
+            OldProxyHost "$proxy_main" > proxy.log 2>&1) &
+        proxy_pid=$!
+
+        waited=0
+        while [ $waited -lt 120 ]; do
+            grep -q 'Listening on' "$dir/proxy/proxy.log" 2>/dev/null && return 0
+            sleep 2
+            waited=$((waited + 2))
+        done
+
+        stop_proxy
+        attempt=$((attempt + 1))
+        sleep 5
+    done
+    tail -4 "$dir/proxy/proxy.log" >&2 2>/dev/null || true
+    return 1
+}
+
 stop_proxy() {
     [ -n "$proxy_pid" ] || return 0
     for child in $(ps | awk -v parent="$proxy_pid" '$2 == parent { print $1 }'); do
@@ -133,6 +161,11 @@ for version in $versions; do
     fi
     echo "  proxy entry point: $proxy_main"
 
+    # Cleared per version, so that a run where one of the two passes never happened cannot be
+    # compared against whatever the last one left behind.
+    rm -f "$dir"/vanilla-proxy.faults "$dir"/loki-proxy.faults
+    baseline=no
+
     backend=$port
     front=$((port + 1))
 
@@ -192,28 +225,24 @@ EOF
         loki_start_server "$dir" harness "-javaagent:$(topath "$loki_agent_jar")=$api_root" \
             || { fail "$version server did not start"; continue; }
 
-        # A build of this age refuses to start unless java.version starts with "1.7", which the VM
-        # will not let the command line say. OldProxyHost sets it from inside the process and then
-        # calls the proxy's own main; nothing else about how it runs is touched.
-        (cd "$dir/proxy" && "$jdk/bin/java" -Xmx512M \
-            -cp "BungeeCord.jar$cp_sep$(topath "$loki_root/build/test-classes")" \
-            OldProxyHost "$proxy_main" > proxy.log 2>&1) &
-        proxy_pid=$!
-        waited=0
-        while [ $waited -lt 60 ]; do
-            grep -q 'Listening on' "$dir/proxy/proxy.log" 2>/dev/null && break
-            sleep 2
-            waited=$((waited + 2))
-        done
-        if ! grep -q 'Listening on' "$dir/proxy/proxy.log" 2>/dev/null; then
+        if ! start_proxy; then
             fail "the proxy never came up, see $dir/proxy/proxy.log"
-            stop_proxy
             loki_stop_server
             continue
         fi
 
+        # A client of this age fetches http://s3.amazonaws.com/MinecraftResources/ while it connects,
+        # on the same thread, and that address stopped existing years ago. Loki intercepts the
+        # request, so the run with Loki never notices; the run without it can sit there until the
+        # network gives up, which is longer than any sensible test waits and made the control fail
+        # while the thing under test passed. Pointing it at an HTTP proxy that is not there makes it
+        # fail at once, which is the same answer it would get from a working internet.
         seconds=${LOKI_CLIENT_SECONDS:-30}
-        LOKI_CLIENT_SECONDS=$((seconds + 20)) \
+        client_args=$LOKI_CLIENT_JVM_ARGS
+        if [ "$mode" = vanilla ]; then
+            client_args="$client_args -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=1"
+        fi
+        LOKI_CLIENT_SECONDS=$((seconds + 20)) LOKI_CLIENT_JVM_ARGS="$client_args" \
             sh "$loki_root/scripts/legacy-client.sh" "$version" 127.0.0.1 "$front" \
             ProxyTester 0 > "$marker" 2>&1 &
         client_pid=$!
@@ -234,6 +263,7 @@ EOF
         # arrives, and it would be worse than no marker at all.
         if grep -qE "logged in" "$dir/harness.log"; then
             ok "$mode client got through the proxy and into the game"
+            [ "$mode" = vanilla ] && baseline=yes
         else
             fail "$mode client never arrived, see $marker, $dir/proxy/proxy.log and $dir/harness.log"
         fi
@@ -249,7 +279,12 @@ EOF
         if [ "$mode" = vanilla ]; then
             note "the proxy's own baseline: $(tr '\n' ' ' < "$dir/vanilla-proxy.faults")"
         else
-            extra=$(comm -13 "$dir/vanilla-proxy.faults" "$dir/loki-proxy.faults" | tr '\n' ' ')
+            if [ "$baseline" != yes ]; then
+                note "no baseline to compare against: the run without Loki never arrived"
+                extra=""
+            else
+                extra=$(comm -13 "$dir/vanilla-proxy.faults" "$dir/loki-proxy.faults" | tr '\n' ' ')
+            fi
             if [ -n "$extra" ]; then
                 fail "the marked handshake upset the proxy: $extra"
             else
@@ -282,16 +317,7 @@ EOF
 
     perl -pi -e "s|address: 127\.0\.0\.1:[0-9]+|address: 127.0.0.1:$probe_port|" \
         "$dir/proxy/config.yml"
-    (cd "$dir/proxy" && "$jdk/bin/java" -Xmx512M \
-        -cp "BungeeCord.jar$cp_sep$(topath "$loki_root/build/test-classes")" \
-        OldProxyHost "$proxy_main" > proxy.log 2>&1) &
-    proxy_pid=$!
-    waited=0
-    while [ $waited -lt 60 ]; do
-        grep -q 'Listening on' "$dir/proxy/proxy.log" 2>/dev/null && break
-        sleep 2
-        waited=$((waited + 2))
-    done
+    start_proxy || fail "the proxy never came up for the forwarding check"
 
     LOKI_AGENT_ARG="$api_root"; export LOKI_AGENT_ARG
     LOKI_CLIENT_SECONDS=15 sh "$loki_root/scripts/legacy-client.sh" "$version" 127.0.0.1 "$front" \
@@ -301,7 +327,9 @@ EOF
     wait $probe_pid 2>/dev/null || true
     stop_proxy
 
-    forwarded=$(grep '^LOGIN=' "$dir/behind.log" | cut -d= -f2-)
+    # Either field: which one the probe puts it in depends on whether the version opens with a
+    # handshake, and the marker rides on the host of whichever packet carries it.
+    forwarded=$(grep -h '^LOGIN=\|^HANDSHAKE=' "$dir/behind.log" | cut -d= -f2- | tr -d '\n')
     # NUL, "Loki", NUL, as a client of this era writes a string: two bytes a character
     if echo "$forwarded" | grep -q "0000004c006f006b00690000"; then
         ok "the proxy forwarded the marker to the backend untouched"

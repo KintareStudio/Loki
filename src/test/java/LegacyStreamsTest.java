@@ -435,6 +435,68 @@ public class LegacyStreamsTest {
                     same(beta, untouched.toByteArray()), null);
         }
 
+        // From 1.3 the block is a plugin message rather than raw bytes, because from 1.3 there can
+        // be a proxy in the middle and a proxy decodes what goes past it. The shape has to be one
+        // the protocol allows: an id, a channel, a length and that many bytes.
+        System.out.println();
+        System.out.println("== the declaration as a packet, for the versions that have proxies ==");
+        for (int c = 0; c < chunks.length; c++) {
+            byte[] framed = LegacyProtocol.PLUGIN_MESSAGE.frame(API);
+            check("it is a plugin message on Loki's own channel",
+                    framed[0] == (byte) 0xFA && framed[1] == 0 && framed[2] == 4
+                            && framed[4] == 'L' && framed[6] == 'o' && framed[8] == 'k'
+                            && framed[10] == 'i', null);
+            check("and its length field says how much follows the header",
+                    LegacyProtocol.PLUGIN_MESSAGE.bodyLength(framed, framed.length)
+                            == framed.length - LegacyProtocol.PLUGIN_MESSAGE.headerBytes(), null);
+
+            // The server writes it in front of its first packet, and the client takes it back off.
+            // Marked the way a server really learns it: by reading a handshake with the marker on
+            // its host, rather than by being told from the test.
+            LegacyStreams.Marked marked = new LegacyStreams.Marked();
+            byte[] modernHello = concat(concat(new byte[]{LegacyProtocol.HANDSHAKE, 39},
+                    string("Probe", true)), concat(string("127.0.0.1", true),
+                    new byte[]{0, 0, (byte) 0x64, (byte) 0x8a}));
+            ByteArrayOutputStream sent = new ByteArrayOutputStream();
+            writeAll(LegacyStreams.markModernHandshake(sent), modernHello, chunks[c]);
+            readAll(LegacyStreams.watchModernHandshake(
+                    new ByteArrayInputStream(sent.toByteArray()), marked), chunks[c]);
+            check("the server knows who it is talking to before it answers", marked.isMarked(), null);
+
+            byte[] serverSide = concat(new byte[]{LegacyProtocol.ENCRYPTION_REQUEST, 0, 0}, nextPacket());
+            ByteArrayOutputStream wire = new ByteArrayOutputStream();
+            writeAll(LegacyStreams.appendAfter(wire, LegacyStreams.constant(0),
+                    LegacyProtocol.ENCRYPTION_REQUEST, new LegacyStreams.Source() {
+                        public String declaration() {
+                            return API;
+                        }
+                    }, marked, LegacyProtocol.PLUGIN_MESSAGE), serverSide, chunks[c]);
+            check("the packet goes out in front of the server's own",
+                    same(concat(framed, serverSide), wire.toByteArray()), null);
+
+            Recorder recorder = new Recorder();
+            byte[] seenByGame = readAll(LegacyStreams.stripAfter(
+                    new ByteArrayInputStream(wire.toByteArray()), LegacyStreams.constant(0),
+                    LegacyProtocol.PLUGIN_MESSAGE.firstByte(), recorder,
+                    LegacyProtocol.PLUGIN_MESSAGE), chunks[c]);
+            check("the game reads what a plain server would have sent",
+                    same(serverSide, seenByGame), null);
+            check("and Loki got the declaration", API.equals(recorder.declaration),
+                    recorder.declaration);
+
+            // A plugin message on somebody else's channel is somebody else's business.
+            byte[] other = LegacyProtocol.PLUGIN_MESSAGE.frame(API);
+            other[4] = 'M'; // MC|Brand, FML|HS, anything at all
+            Recorder none = new Recorder();
+            byte[] untouched = readAll(LegacyStreams.stripAfter(
+                    new ByteArrayInputStream(concat(other, serverSide)), LegacyStreams.constant(0),
+                    LegacyProtocol.PLUGIN_MESSAGE.firstByte(), none, LegacyProtocol.PLUGIN_MESSAGE),
+                    chunks[c]);
+            check("another channel's message is left where it is",
+                    same(concat(other, serverSide), untouched), null);
+            check("and nothing is reported as declared", none.declaration == null, none.declaration);
+        }
+
         // 1.3 changed the handshake into four fields, and reading it as one string walks off the
         // end of the packet. The filter has to recognise that and stand down rather than wait for
         // a boundary that is not coming.

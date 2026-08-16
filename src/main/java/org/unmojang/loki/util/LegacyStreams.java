@@ -171,13 +171,25 @@ public final class LegacyStreams {
         };
     }
 
+    /** For the eras that predate proxies, where the block is raw bytes and always was. */
+    public static OutputStream appendAfter(OutputStream out, Prefix prefix, byte firstByte,
+                                           Source source, Marked marked) {
+        return appendAfter(out, prefix, firstByte, source, marked, LegacyProtocol.RAW);
+    }
+
+    /** The reader's half of the same. */
+    public static InputStream stripAfter(InputStream source, Prefix prefix, byte firstByte,
+                                         Sink sink) {
+        return stripAfter(source, prefix, firstByte, sink, LegacyProtocol.RAW);
+    }
+
     /**
      * Server side, outgoing: appends the block once the identification packet has gone out, and
      * only to a client that marked itself.
      */
     public static OutputStream appendAfter(OutputStream out, final Prefix prefix,
                                            final byte firstByte, final Source source,
-                                           final Marked marked) {
+                                           final Marked marked, final LegacyProtocol.Block block) {
         return new FilterOutputStream(out) {
             private final byte[] head = new byte[8];
             private int seen;
@@ -244,8 +256,8 @@ public final class LegacyStreams {
                 if (!applicable || appended || prefixBytes < 0 || seen < prefixBytes) return;
                 if (!marked.isMarked()) return;
                 appended = true; // set first: a failure here must not be retried on every write
-                byte[] block = LegacyProtocol.payload(source.declaration());
-                if (block != null) out.write(block);
+                byte[] framed = block.frame(source.declaration());
+                if (framed != null) out.write(framed);
             }
         };
     }
@@ -522,7 +534,8 @@ public final class LegacyStreams {
      * far, decides once, and then stops looking. Anything it cannot make sense of is passed on.
      */
     public static InputStream stripAfter(InputStream source, final Prefix prefix,
-                                         final byte firstByte, final Sink sink) {
+                                         final byte firstByte, final Sink sink,
+                                         final LegacyProtocol.Block block) {
         // Buffered because deciding requires reading ahead and putting back what turned out not to
         // be ours, and a socket's own stream cannot be put back into.
         InputStream in = new BufferedInputStream(source,
@@ -580,19 +593,12 @@ public final class LegacyStreams {
              */
             private void removeBlock() throws IOException {
                 decided = true;
-                in.mark(LegacyProtocol.PAYLOAD_HEADER_BYTES + LegacyProtocol.PAYLOAD_MAX_BYTES);
+                in.mark(block.headerBytes() + LegacyProtocol.PAYLOAD_MAX_BYTES);
 
-                byte[] header = new byte[LegacyProtocol.PAYLOAD_HEADER_BYTES];
+                byte[] header = new byte[block.headerBytes()];
                 int got = fill(header, header.length);
-                if (got < header.length
-                        || !LegacyProtocol.startsWithMagic(header, 0, got)) {
-                    in.reset();
-                    return;
-                }
-
-                int length = ((header[LegacyProtocol.PAYLOAD_MAGIC.length] & 0xFF) << 8)
-                        | (header[LegacyProtocol.PAYLOAD_MAGIC.length + 1] & 0xFF);
-                if (length <= 0 || length > LegacyProtocol.PAYLOAD_MAX_BYTES) {
+                int length = got < header.length ? -1 : block.bodyLength(header, got);
+                if (length < 0) {
                     in.reset();
                     return;
                 }

@@ -437,6 +437,117 @@ public final class LegacyProtocol {
     }
 
     /**
+     * How the declaration is framed on the wire, of which there are two.
+     * <p>
+     * Where a connection is a wire between two programs, the block can be raw bytes: nothing in
+     * between is parsing it, and the client takes it back out before the game reads any of it.
+     * From 1.3 that stopped being true, because from 1.3 there are proxies, and a proxy decodes
+     * every packet in both directions to decide where to send it. Raw bytes in that stream are not
+     * a packet, and a proxy that meets them says so and drops the connection — measured, on
+     * BungeeCord, as "Unknown packet id 79", which is the O of {@code 0xFE 'L' 'O' 'K'}.
+     * <p>
+     * So from 1.3 the same declaration travels in a plugin message instead, which is a packet of
+     * the protocol carrying a channel name and a payload. A proxy decodes it like any other and
+     * either forwards it or drops it; either way the connection survives, which raw bytes could not
+     * promise. A client without Loki never marks itself and is never sent one.
+     */
+    public interface Block {
+        /** What the block starts with, which is also how a reader knows to look at it at all. */
+        byte firstByte();
+
+        /** How many bytes have to be read before the length of the rest is known. */
+        int headerBytes();
+
+        /** The bytes to write, or null when there is nothing to say. */
+        byte[] frame(String declaration);
+
+        /**
+         * @return how many bytes of body follow the header, or -1 when this is not one of ours
+         */
+        int bodyLength(byte[] header, int got);
+    }
+
+    /** The channel the declaration travels on, chosen to be nobody else's. */
+    public static final String CHANNEL = "Loki";
+
+    /** Raw bytes, for the eras where nothing sits between the two ends of a connection. */
+    public static final Block RAW = new Block() {
+        public byte firstByte() {
+            return PAYLOAD_MAGIC[0];
+        }
+
+        public int headerBytes() {
+            return PAYLOAD_HEADER_BYTES;
+        }
+
+        public byte[] frame(String declaration) {
+            return payload(declaration);
+        }
+
+        public int bodyLength(byte[] header, int got) {
+            if (got < PAYLOAD_HEADER_BYTES || !startsWithMagic(header, 0, got)) return -1;
+            int length = ((header[PAYLOAD_MAGIC.length] & 0xFF) << 8)
+                    | (header[PAYLOAD_MAGIC.length + 1] & 0xFF);
+            return length > 0 && length <= PAYLOAD_MAX_BYTES ? length : -1;
+        }
+    };
+
+    /**
+     * A plugin message, for 1.3 and up, where a proxy may be reading.
+     * <p>
+     * {@code 0xFA}, the channel as a string, a short length and that many bytes — the shape read
+     * out of the 1.6.4 client's own writer rather than taken from a wiki. The channel is a fixed
+     * four characters, so the header is a fixed thirteen bytes and the length is always the last
+     * two of them.
+     */
+    public static final Block PLUGIN_MESSAGE = new Block() {
+        public byte firstByte() {
+            return (byte) 0xFA;
+        }
+
+        public int headerBytes() {
+            return 1 + 2 + CHANNEL.length() * 2 + 2;
+        }
+
+        public byte[] frame(String declaration) {
+            if (declaration == null || declaration.length() == 0) return null;
+            byte[] body;
+            try {
+                body = declaration.getBytes("UTF-8");
+            } catch (Exception e) {
+                return null;
+            }
+            if (body.length > PAYLOAD_MAX_BYTES) return null;
+
+            byte[] block = new byte[headerBytes() + body.length];
+            int at = 0;
+            block[at++] = firstByte();
+            block[at++] = (byte) (CHANNEL.length() >> 8);
+            block[at++] = (byte) CHANNEL.length();
+            for (int i = 0; i < CHANNEL.length(); i++) {
+                block[at++] = (byte) (CHANNEL.charAt(i) >> 8);
+                block[at++] = (byte) CHANNEL.charAt(i);
+            }
+            block[at++] = (byte) (body.length >> 8);
+            block[at++] = (byte) body.length;
+            System.arraycopy(body, 0, block, at, body.length);
+            return block;
+        }
+
+        public int bodyLength(byte[] header, int got) {
+            if (got < headerBytes() || header[0] != firstByte()) return -1;
+            int characters = ((header[1] & 0xFF) << 8) | (header[2] & 0xFF);
+            if (characters != CHANNEL.length()) return -1;
+            for (int i = 0; i < CHANNEL.length(); i++) {
+                int c = ((header[3 + i * 2] & 0xFF) << 8) | (header[4 + i * 2] & 0xFF);
+                if (c != CHANNEL.charAt(i)) return -1;
+            }
+            int length = ((header[headerBytes() - 2] & 0xFF) << 8) | (header[headerBytes() - 1] & 0xFF);
+            return length > 0 && length <= PAYLOAD_MAX_BYTES ? length : -1;
+        }
+    };
+
+    /**
      * The block to append after a server packet, or null when there is nothing to say.
      *
      * @param declaration what the client should be told, already in the form the client parses

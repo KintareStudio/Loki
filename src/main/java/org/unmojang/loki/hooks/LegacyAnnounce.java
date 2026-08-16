@@ -5,7 +5,6 @@ import org.unmojang.loki.util.LegacyStreams;
 
 import org.unmojang.loki.util.logger.NilLogger;
 
-
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.Collections;
@@ -63,10 +62,23 @@ public final class LegacyAnnounce {
         }
     }
 
-    /** What this server tells a Loki client, or null when it has nothing to say. */
+    /**
+     * What this server tells a Loki client: the same object it would put in a status response from
+     * 1.7 onwards, so that both eras declare one thing in one format.
+     * <p>
+     * Built through the system class loader, since this class sits on the bootstrap path and the
+     * advertiser does not.
+     */
     private static String declaration() {
-        String session = System.getProperty("minecraft.api.session.host");
-        return session == null || session.length() == 0 ? null : session;
+        try {
+            Object body = Class.forName("org.unmojang.loki.hooks.ProfileAdvertiser", true,
+                            ClassLoader.getSystemClassLoader())
+                    .getMethod("declaration").invoke(null);
+            return body == null ? null : "{" + body + "}";
+        } catch (Throwable t) {
+            log.debug("Nothing to declare on this connection (" + t + ")");
+            return null;
+        }
     }
 
     /**
@@ -77,11 +89,10 @@ public final class LegacyAnnounce {
         if (in == null || disabled()) return in;
         try {
             if (isServer(socket)) {
-                return LegacyStreams.watchForMark(in, LegacyProtocol.CLASSIC_MARKER_OFFSET,
-                        LegacyProtocol.MARKER, LegacyProtocol.CLASSIC_IDENTIFICATION, markOf(socket));
+                return LegacyStreams.watchBetaLogin(in, markOf(socket));
             }
-            return LegacyStreams.stripAfter(in, LegacyProtocol.CLASSIC_IDENTIFICATION_BYTES,
-                    LegacyProtocol.CLASSIC_IDENTIFICATION, new LegacyStreams.Sink() {
+            return LegacyStreams.stripAfter(in, LegacyStreams.afterHandshake(),
+                    LegacyProtocol.HANDSHAKE, new LegacyStreams.Sink() {
                         public void declared(String declaration) {
                             log.info("Server declared where profiles come from: " + declaration);
                             announce(socket, declaration);
@@ -102,10 +113,10 @@ public final class LegacyAnnounce {
             java.net.InetAddress address = socket.getInetAddress();
             if (address == null) return; // closed under us, so there is no server to be on
             // Through the system loader on purpose: this class is on the bootstrap path, and the
-            // ProfileRedirect that must hear about it is the one the game.s own lookups consult.
+            // ProfileRedirect that must hear about it is the one the game own lookups consult.
             Class.forName("org.unmojang.loki.hooks.ProfileRedirect", true,
                             ClassLoader.getSystemClassLoader())
-                    .getMethod("noteDeclaredRoot", String.class, int.class, String.class)
+                    .getMethod("noteDeclaredJson", String.class, int.class, String.class)
                     .invoke(null, address.getHostAddress(), Integer.valueOf(socket.getPort()), declaration);
         } catch (Throwable t) {
             log.debug("Could not apply what the server declared (" + t + ")");
@@ -121,16 +132,14 @@ public final class LegacyAnnounce {
         try {
             if (isServer(socket)) {
                 if (declaration() == null) return out;
-                return LegacyStreams.appendAfter(out, LegacyProtocol.CLASSIC_IDENTIFICATION_BYTES,
-                        LegacyProtocol.CLASSIC_IDENTIFICATION, new LegacyStreams.Source() {
+                return LegacyStreams.appendAfter(out, LegacyStreams.afterHandshake(),
+                        LegacyProtocol.HANDSHAKE, new LegacyStreams.Source() {
                             public String declaration() {
                                 return LegacyAnnounce.declaration();
                             }
                         }, markOf(socket));
             }
-            return LegacyStreams.mark(out, LegacyProtocol.CLASSIC_IDENTIFICATION_BYTES,
-                    LegacyProtocol.CLASSIC_MARKER_OFFSET, LegacyProtocol.MARKER,
-                    LegacyProtocol.CLASSIC_IDENTIFICATION);
+            return LegacyStreams.markBetaLogin(out);
         } catch (Throwable t) {
             log.debug("Not filtering this socket's output (" + t + ")");
             return out;

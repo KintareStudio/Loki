@@ -167,23 +167,22 @@ public final class ProfileRedirect {
      *
      * @param root what the server declared, an authlib-injector root or a bare host
      */
-    public static void noteDeclaredRoot(String host, int port, String root) {
-        if (disabled()) return;
-        String canonical = canonicalize(root);
-        if (canonical == null) return;
+    public static void noteDeclaredJson(String host, int port, String json) {
+        if (disabled() || json == null || json.length() == 0) return;
+        try {
+            Discovery discovery = new Discovery();
+            read(discovery, new Json.JSONObject(json));
+            if (!discovery.found()) return;
 
-        String peer = host + ":" + port;
-        Discovery discovery = new Discovery();
-        discovery.root = canonical;
-        discovery.session = canonical + "/sessionserver";
-        discovery.account = canonical + "/api";
-        discovery.services = canonical + "/minecraftservices";
-        discovery.done.countDown();
-
-        discoveries.put(peer, discovery);
-        System.setProperty(PROP_PEER, peer);
-        publishIfCurrent(peer, discovery);
-        ProfileKeys.warmDeclared();
+            String peer = host + ":" + port;
+            discovery.done.countDown();
+            discoveries.put(peer, discovery);
+            System.setProperty(PROP_PEER, peer);
+            publishIfCurrent(peer, discovery);
+            ProfileKeys.warmDeclared();
+        } catch (Throwable t) {
+            log.debug("Could not read what the server declared on the connection (" + t + ")");
+        }
     }
 
     private static String hostOf(InetSocketAddress address) {
@@ -235,7 +234,18 @@ public final class ProfileRedirect {
         String statusJson = ServerListPing.statusJson(host, port, PING_TIMEOUT_MS);
         Json.JSONObject declaration = new Json.JSONObject(statusJson).optJSONObject(STATUS_KEY);
         if (declaration == null) return;
+        read(discovery, declaration);
+    }
 
+    /**
+     * Reads the declaration itself, wherever it arrived from.
+     * <p>
+     * Split out because it arrives two ways. From 1.7 it is a key in the status JSON, fetched by
+     * pinging; before that there is no status JSON, so the server puts the same object on the game
+     * connection and Loki takes it back off. One format, one parser, and the era only decides how
+     * the bytes got here.
+     */
+    private static void read(Discovery discovery, Json.JSONObject declaration) throws Exception {
         String root = canonicalize(declaration.optString(FIELD_API_ROOT, ""));
         if (root != null) {
             root = followApiLocation(root);

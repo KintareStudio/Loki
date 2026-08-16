@@ -53,6 +53,57 @@ public final class LegacyProtocol {
     /** Enough for any declaration, and small enough that a corrupt length cannot ask for the heap. */
     public static final int PAYLOAD_MAX_BYTES = 8192;
 
+    // ---------------------------------------------------------------- Alpha and Beta
+
+    /** Handshake, the first packet in each direction: a packet id and one string. */
+    public static final byte HANDSHAKE = 0x02;
+    /** Login, the second in each direction, and where the client's unused fields are. */
+    public static final byte LOGIN = 0x01;
+
+    /**
+     * How long the handshake is, once its length field has arrived, or -1 while it has not.
+     * <p>
+     * A string on this wire is a two byte count of characters followed by that many UTF-16BE
+     * characters, so three bytes are enough to know where the packet ends. That is the boundary the
+     * announcement uses in both directions: the payload goes immediately after it, in the place the
+     * login packet would otherwise start, and the client knows to look there because 0xFE is not a
+     * packet id any server of this era sends.
+     * <p>
+     * Deliberately not the end of the login packet, which would have been the obvious choice: its
+     * trailing fields differ between versions and getting them wrong by one byte would corrupt the
+     * connection. The handshake is one string and has been since Alpha.
+     */
+    public static int handshakeLength(byte[] head, int seen) {
+        if (seen < 3) return -1;
+        int characters = ((head[1] & 0xFF) << 8) | (head[2] & 0xFF);
+        return 3 + characters * 2;
+    }
+
+    /**
+     * Where the client's login packet keeps the eight bytes nobody reads, counted from the start of
+     * that packet, or -1 while the username's length has not arrived.
+     * <p>
+     * The layout is a packet id, the protocol version, the username, and then the map seed — which
+     * the client sends as zero because a client has no seed to send. That is the marker's home: it
+     * changes no length, and a server without Loki reads it into a field it then ignores.
+     */
+    public static int loginSeedOffset(byte[] login, int seen) {
+        if (seen < 7) return -1;
+        int characters = ((login[5] & 0xFF) << 8) | (login[6] & 0xFF);
+        return 1 + 4 + 2 + characters * 2;
+    }
+
+    /** The eight bytes written there, chosen so that a zero seed cannot be mistaken for it. */
+    public static final byte[] LOGIN_MARKER = {'L', 'o', 'k', 'i', 0x00, 0x01, 0x00, 0x00};
+
+    /** Whether these bytes, at this offset, are the marker rather than a seed. */
+    public static boolean isLoginMarker(byte[] bytes, int at) {
+        for (int i = 0; i < LOGIN_MARKER.length; i++) {
+            if (bytes[at + i] != LOGIN_MARKER[i]) return false;
+        }
+        return true;
+    }
+
     private LegacyProtocol() {}
 
     /** Whether these bytes are the start of the block a server appends for a Loki client. */

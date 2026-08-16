@@ -93,7 +93,17 @@ loki_legacy_server_url() {
         b1.4_01) echo "https://files.betacraft.uk/server-archive/beta/b1.4_01.jar" ;;
         b1.2_01) echo "https://files.betacraft.uk/server-archive/beta/b1.2_01.jar" ;;
         b1.1_02) echo "https://files.betacraft.uk/server-archive/beta/b1.1_02.jar" ;;
-        a1.2.6)  echo "https://files.betacraft.uk/server-archive/alpha/a0.2.8.jar" ;;
+        # The Alpha pairings are the protocol version each server checks for, read out of its own
+        # bytecode next to the "Outdated client!" it prints: a0.1.0 wants 13, a0.1.2_01 wants 14,
+        # a0.1.4 wants 1, a0.2.0 wants 2, a0.2.2 wants 3 and a0.2.8 wants 6. The numbering restarted
+        # at a1.0.17, which is why the servers do not sort the way their names do.
+        a1.2.6)     echo "https://files.betacraft.uk/server-archive/alpha/a0.2.8.jar" ;;
+        a1.2.0)     echo "https://files.betacraft.uk/server-archive/alpha/a0.2.2.jar" ;;
+        a1.1.2_01)  echo "https://files.betacraft.uk/server-archive/alpha/a0.2.0.jar" ;;
+        a1.0.17_04) echo "https://files.betacraft.uk/server-archive/alpha/a0.1.4.jar" ;;
+        a1.0.16)    echo "https://files.betacraft.uk/server-archive/alpha/a0.1.2_01.jar" ;;
+        a1.0.15|a1.0.14|a1.0.11)
+                    echo "https://files.betacraft.uk/server-archive/alpha/a0.1.0.jar" ;;
         b1.8)   echo "https://files.betacraft.uk/server-archive/beta/b1.8.jar" ;;
         b1.7.3) echo "https://files.betacraft.uk/server-archive/beta/b1.7.3.jar" ;;
         a0.2.8) echo "https://files.betacraft.uk/server-archive/alpha/a0.2.8.jar" ;;
@@ -186,6 +196,16 @@ loki_start_server() {
     waited=0
     while [ $waited -lt 300 ]; do
         if ! kill -0 "$loki_server_pid" 2>/dev/null; then
+            # A server of this age stops when its console reaches end of file, and a run with no
+            # console attached occasionally hands it one straight away — it reads as "Stopping
+            # server" partway through generating the world. Worth one more go before calling it a
+            # failure, because it is not one, and the second attempt finds the world already there.
+            if [ -z "$loki_retried" ] && grep -q 'Stopping server' "$work/$label.log" 2>/dev/null; then
+                echo "  server stopped before it finished starting; trying once more" >&2
+                loki_retried=yes
+                loki_start_server "$work" "$label" "$@"
+                return $?
+            fi
             echo "  server exited early, see $work/$label.log" >&2
             tail -5 "$work/$label.log" >&2
             return 1
@@ -205,6 +225,7 @@ loki_start_server() {
 }
 
 loki_stop_server() {
+    loki_retried=""   # each server gets its own second chance, not one between them all
     [ -n "$loki_server_pid" ] || return 0
     kill "$loki_server_pid" 2>/dev/null || true
     wait "$loki_server_pid" 2>/dev/null || true

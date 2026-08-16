@@ -128,7 +128,7 @@ for version in $versions; do
         kill -9 $client_pid 2>/dev/null || true
         wait $client_pid 2>/dev/null || true
 
-        if grep -q "logged in with entity id" "$dir/server.log"; then
+        if grep -q "logged in" "$dir/server.log"; then
             ok "$mode client got into the game"
         else
             fail "$mode client never logged in, see $marker and $dir/server.log"

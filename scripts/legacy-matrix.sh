@@ -150,7 +150,9 @@ for version in $versions; do
                 fail "the override outlived the connection, see $marker"
             fi
         else
-            if grep -q "loki" "$marker"; then
+            # Loki's own log prefix, not the word: this repository is called loki, so a client that
+            # merely prints the path it was started from would fail a search for that.
+            if grep -q "\[Loki/" "$marker"; then
                 fail "a vanilla client saw something of Loki's, see $marker"
             else
                 ok "and a vanilla one was told nothing"

@@ -61,6 +61,16 @@ public final class ClassicChannels {
         boolean sending;
         /** Client: what the server declared, picked up by whoever asks next. */
         public String declaration;
+        /**
+         * Whether anything was ever declared on this connection, which stays true after the
+         * declaration above has been collected.
+         * <p>
+         * What it is for is the other end of the visit. Every channel in the process closes through
+         * the same hook, and in a Netty program that is every connection it ever makes; asking each
+         * one whether it was the server currently in force meant a socket lookup and a logged
+         * failure per close, on channels that had never been Classic in the first place.
+         */
+        public boolean declaredHere;
 
         /** Server: whether the client at the other end said it was one of ours. */
         public boolean isMarked() {
@@ -236,6 +246,7 @@ public final class ClassicChannels {
                     }
                 } else {
                     conn.declaration = LegacyProtocol.declarationOf(all, 0, total);
+                    conn.declaredHere = conn.declaration != null;
                     conn.decided = true;
                     at = length;
                 }

@@ -50,9 +50,16 @@ mkdir -p "$base"
 # tries twice: a build this old prints an "outdated build" notice and then sits for fifteen seconds
 # before doing anything, and a port it held a moment ago may not be free yet.
 start_proxy() {
+    # LOKI_PROXY_AGENT puts Loki on the proxy as well, which is a deployment worth being able to
+    # try: on 1.7 and up the proxy's own status response carries the declaration, and the proxy is
+    # arguably where it belongs, since its address is the one the player typed.
+    proxy_agent=""
+    [ -n "$LOKI_PROXY_AGENT" ] && \
+        proxy_agent="-javaagent:$(topath "$loki_agent_jar")=$api_root -DLoki.debug=true"
+
     attempt=1
     while [ $attempt -le 2 ]; do
-        (cd "$dir/proxy" && "$jdk/bin/java" -Xmx512M \
+        (cd "$dir/proxy" && "$jdk/bin/java" -Xmx512M $proxy_agent \
             -cp "BungeeCord.jar$cp_sep$(topath "$loki_root/build/test-classes")" \
             OldProxyHost "$proxy_main" > proxy.log 2>&1) &
         proxy_pid=$!

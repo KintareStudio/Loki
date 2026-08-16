@@ -251,9 +251,18 @@ public final class LegacyAnnounce {
     /** Called from {@code SocketChannel.close}, since a visit here ends the same way. */
     public static void closingChannel(Object channel) {
         if (channel == null || disabled()) return;
+        // Only a channel that was told something has anything to put back, and asking any other
+        // one costs a socket lookup on every connection a Netty program ever closes — which on a
+        // proxy is all of them, and on some of them the lookup is not even allowed.
+        org.unmojang.loki.util.ClassicChannels.Conn conn;
+        synchronized (channels) {
+            conn = channels.get(channel);
+        }
+        if (conn == null || conn.server || !conn.declaredHere) return;
+
         try {
             java.net.Socket socket = ((java.nio.channels.SocketChannel) channel).socket();
-            if (socket != null && !connOf(channel).server) closing(socket);
+            if (socket != null) closing(socket);
         } catch (Throwable t) {
             log.debug("Could not tell whether that channel was the current server (" + t + ")");
         }

@@ -246,6 +246,16 @@ public class LegacyStreamsTest {
             check("while Loki got the declaration", API.equals(recorder.declaration),
                     recorder.declaration);
 
+            // An Alpha login carries a second string before the seed, and a 1.6 handshake a host
+            // and a port, so the offset this computes lands on something else entirely there. The
+            // marker only goes over zeros, which is what makes being wrong harmless.
+            byte[] notBeta = concat(betaHandshake("Tester"), betaLogin("Tester"));
+            notBeta[betaHandshake("Tester").length + 1 + 4 + 2 + "Tester".length() * 2] = 0x37;
+            ByteArrayOutputStream untouched = new ByteArrayOutputStream();
+            writeAll(LegacyStreams.markBetaLogin(untouched), notBeta, chunk);
+            check("a packet shaped differently is left exactly as it was",
+                    same(notBeta, untouched.toByteArray()), null);
+
             LegacyStreams.Marked unmarked = new LegacyStreams.Marked();
             ByteArrayOutputStream plain = new ByteArrayOutputStream();
             writeAll(LegacyStreams.appendAfter(plain, LegacyStreams.afterHandshake(),

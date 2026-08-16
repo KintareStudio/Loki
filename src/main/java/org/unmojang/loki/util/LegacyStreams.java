@@ -279,6 +279,9 @@ public final class LegacyStreams {
 
             /** Returns the byte to write, which is the one given unless it is part of the seed. */
             private byte filter(byte b) {
+                // Checked here and not only in write: one write can carry the whole login, and
+                // giving up partway through it has to stop this loop too
+                if (done || !applicable) return b;
                 if (!inLogin) {
                     if (seen < head.length) head[seen] = b;
                     if (seen == 0 && b != LegacyProtocol.HANDSHAKE) {
@@ -301,8 +304,17 @@ public final class LegacyStreams {
                 }
                 if (seedAt < 0) seedAt = LegacyProtocol.loginSeedOffset(head, seen + 1);
 
+                // Only over zeros. A client sends the seed as zero because it has no seed to send,
+                // so anything else there means this packet is not shaped the way this expects — an
+                // Alpha login carries a second string before the seed, and a 1.6 handshake carries
+                // a host and a port — and writing into it would corrupt the connection. Refusing
+                // costs a declaration; being wrong costs the login.
                 byte written = b;
                 if (seedAt > 0 && seen >= seedAt && seen < seedAt + LegacyProtocol.LOGIN_MARKER.length) {
+                    if (b != 0) {
+                        done = true; // not the field this was looking for
+                        return b;
+                    }
                     written = LegacyProtocol.LOGIN_MARKER[seen - seedAt];
                 }
                 seen++;

@@ -172,6 +172,15 @@ protocol 10, and one of them has a seed and the other does not. What separates t
 older one sends no handshake at all — its login packet is the first thing on the wire — and that is
 what decides which shape is read.
 
+The top of that row is the only part of the range that cannot be tested against a server, and not
+for want of one being archived: survival multiplayer arrived with a1.0.15 on 3 August 2010 and the
+first server, Alpha 0.1.0, the day after it. The wiki says as much for each of the versions before
+that — "corresponding server unavailable" — and both the Betacraft and Omniarchive collections
+begin at 0.1.0. Those clients carry the networking code, which is why they can be made to send a
+login packet at all, but no server was ever published that would answer one. They are covered by
+the shape cases, built from the packets their own binaries really send, and that is the most that
+exists to check them against.
+
 From 1.3 the login packet has no username at all, and the mark moves to the host: the address the
 client says it dialled, which the server already knows and drops. That is the field Forge has
 appended `\0FML\0` to since the same release. It is also the only part of this a proxy can see, since

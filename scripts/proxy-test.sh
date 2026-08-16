@@ -252,6 +252,10 @@ EOF
         # fail at once, which is the same answer it would get from a working internet.
         seconds=${LOKI_CLIENT_SECONDS:-30}
         client_args=$LOKI_CLIENT_JVM_ARGS
+        # And time as well as a dead-end proxy, because the wait is on the network rather than on
+        # anything this can shorten: given ninety seconds the client of 2012 gives up on the address
+        # and joins normally, which is how it was established that nothing is actually wrong with it.
+        [ "$mode" = vanilla ] && seconds=$((seconds + 90))
         if [ "$mode" = vanilla ]; then
             client_args="$client_args -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=1"
         fi

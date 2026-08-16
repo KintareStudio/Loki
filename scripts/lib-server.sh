@@ -84,11 +84,16 @@ loki_jdk() {
 # a0.2.8, and Classic clients by the c1.x line. That is why this is a table and not a rule.
 loki_legacy_server_url() {
     case $1 in
+        1.2.1)  echo "https://files.betacraft.uk/server-archive/release/1.2/1.2.1.jar" ;;
         1.1)    echo "https://files.betacraft.uk/server-archive/release/1.1/1.1.jar" ;;
         1.0)    echo "https://files.betacraft.uk/server-archive/release/1.0/1.0.0.jar" ;;
         b1.8.1) echo "https://files.betacraft.uk/server-archive/beta/b1.8.1.jar" ;;
         b1.6.6) echo "https://files.betacraft.uk/server-archive/beta/b1.6.6.jar" ;;
         b1.5_01) echo "https://files.betacraft.uk/server-archive/beta/b1.5_01.jar" ;;
+        b1.4_01) echo "https://files.betacraft.uk/server-archive/beta/b1.4_01.jar" ;;
+        b1.2_01) echo "https://files.betacraft.uk/server-archive/beta/b1.2_01.jar" ;;
+        b1.1_02) echo "https://files.betacraft.uk/server-archive/beta/b1.1_02.jar" ;;
+        a1.2.6)  echo "https://files.betacraft.uk/server-archive/alpha/a0.2.8.jar" ;;
         b1.8)   echo "https://files.betacraft.uk/server-archive/beta/b1.8.jar" ;;
         b1.7.3) echo "https://files.betacraft.uk/server-archive/beta/b1.7.3.jar" ;;
         a0.2.8) echo "https://files.betacraft.uk/server-archive/alpha/a0.2.8.jar" ;;
@@ -97,6 +102,9 @@ loki_legacy_server_url() {
     esac
 }
 
+# Note for callers: this and the functions above assign to "version" and "work", which sh has no
+# way of keeping to themselves. A caller that keeps its base directory in a variable of either name
+# will find it overwritten — see the note in legacy-matrix.sh.
 loki_fetch_server() {
     version=$1
     work=$2
@@ -182,7 +190,9 @@ loki_start_server() {
             tail -5 "$work/$label.log" >&2
             return 1
         fi
-        if grep -q 'Done (' "$work/$label.log" 2>/dev/null; then
+        # "Done (1.234s)!" from Beta on, and a bare "Done!" in Alpha. Both are followed by the same
+        # offer of help, which is the part that has not changed since a0.1.0.
+        if grep -q 'For help, type' "$work/$label.log" 2>/dev/null; then
             return 0
         fi
         sleep 2

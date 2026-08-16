@@ -26,8 +26,11 @@ loki_root=$(cd "$(dirname "$0")/.." && pwd)
 versions="$*"
 [ -n "$versions" ] || versions="b1.5_01 b1.6.6 b1.7.3 b1.8.1 1.0 1.1"
 
-work="$loki_root/build/legacy-matrix"
-mkdir -p "$work"
+# Not "work": lib-server.sh assigns to a variable of that name, and sh has no locals, so the base
+# directory would be replaced by the last version's own and every version after it would be
+# created inside its predecessor.
+base="$loki_root/build/legacy-matrix"
+mkdir -p "$base"
 
 say() { echo "  $*"; }
 ok() { echo "  ok   $*"; }
@@ -39,7 +42,7 @@ jdk=${LOKI_JDK8:-}
 [ -n "$jdk" ] || { echo "set LOKI_JDK8" >&2; exit 2; }
 
 # ----------------------------------------------------------------- the API server
-stub_log="$work/stub.log"
+stub_log="$base/stub.log"
 rm -f "$stub_log"
 "$jdk/bin/java" -cp "$(topath "$loki_agent_jar")$cp_sep$(topath "$loki_root/build/test-classes")" \
     StubYggdrasil A > "$stub_log" 2>&1 &
@@ -64,12 +67,19 @@ port=${LOKI_TEST_PORT:-25650}
 for version in $versions; do
     echo
     echo "== $version =="
-    dir="$work/$version"
+    dir="$base/$version"
     mkdir -p "$dir"
 
     loki_needs_java=8
     loki_java_home=$jdk
     loki_java_bin="$jdk/bin/java"
+
+    # 1.0 and 1.1 come from the archive, but Mojang still publishes the server for 1.2, and finding
+    # it means reading that version's own metadata first. Skipping this is why 1.2 reported having
+    # no server at all: the file the download URL is read from had never been fetched.
+    if [ -z "$(loki_legacy_server_url "$version")" ]; then
+        loki_fetch_version "$version" "$dir" || { fail "no metadata for $version"; continue; }
+    fi
     loki_fetch_server "$version" "$dir" || { fail "no server for $version"; continue; }
 
     echo "eula=true" > "$dir/eula.txt"

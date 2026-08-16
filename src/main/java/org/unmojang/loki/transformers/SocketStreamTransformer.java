@@ -55,6 +55,20 @@ public class SocketStreamTransformer extends LokiTransformer {
                     && "()Ljava/net/Socket;".equals(mn.desc)) {
                 hook = "accepted";
                 descriptor = "(Ljava/lang/Object;)Ljava/lang/Object;";
+            } else if (SOCKET.equals(className) && "close".equals(mn.name)
+                    && "()V".equals(mn.desc)) {
+                // Below 1.7 nothing tells the game a visit is over, so the end of the connection
+                // has to, and from 1.3 the connection can end without the streams being touched
+                // again: the game closes the socket and leaves them to be collected. Hooked at the
+                // top of the method, while the socket still knows who it was talking to.
+                InsnList patch = new InsnList();
+                patch.add(new VarInsnNode(Opcodes.ALOAD, 0));
+                patch.add(new MethodInsnNode(Opcodes.INVOKESTATIC, ANNOUNCE, "closing",
+                        "(Ljava/net/Socket;)V", false));
+                mn.instructions.insert(patch);
+                changed = true;
+                Loki.log.debug("Patching " + LokiUtil.getFqmn(className, mn.name, mn.desc));
+                continue;
             }
             if (hook == null) continue;
 

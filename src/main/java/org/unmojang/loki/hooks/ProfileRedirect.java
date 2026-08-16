@@ -148,7 +148,10 @@ public final class ProfileRedirect {
      * address again re-discovers rather than being taken for the reconnect it is not, which is also
      * what makes the declared keys be read afresh instead of served out of the last session's cache.
      */
-    static void noteLeave(String host, int port) {
+    // Public because the pre-1.7 path calls it from the bootstrap class loader, which can only
+    // reach what is public, and reaching it is the whole point: leaving is what puts the
+    // configured API back.
+    public static void noteLeave(String host, int port) {
         String peer = host + ":" + port;
         if (!peer.equals(System.getProperty(PROP_PEER))) return;
 

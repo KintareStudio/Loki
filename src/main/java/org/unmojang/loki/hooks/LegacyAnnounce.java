@@ -89,18 +89,111 @@ public final class LegacyAnnounce {
         if (in == null || disabled()) return in;
         try {
             if (isServer(socket)) {
-                return LegacyStreams.watchBetaLogin(in, markOf(socket));
+                // Both, nested, rather than a guess about which era is connecting: each stands
+                // itself down on a handshake of the shape the other reads, so whichever arrives
+                // meets exactly one filter that is still listening.
+                return LegacyStreams.watchModernHandshake(
+                        LegacyStreams.watchBetaLogin(in, markOf(socket)), markOf(socket));
             }
-            return LegacyStreams.stripAfter(in, LegacyStreams.afterHandshake(),
-                    LegacyProtocol.HANDSHAKE, new LegacyStreams.Sink() {
-                        public void declared(String declaration) {
-                            log.info("Server declared where profiles come from: " + declaration);
-                            announce(socket, declaration);
-                        }
-                    });
+            final boolean[] declared = new boolean[1];
+            LegacyStreams.Sink sink = new LegacyStreams.Sink() {
+                public void declared(String declaration) {
+                    log.info("Server declared where profiles come from: " + declaration);
+                    declared[0] = true;
+                    announce(socket, declaration);
+                }
+            };
+            // From 1.3 the block is the first thing a server writes, because by then it has read
+            // the handshake the marker is in; before that it can only come after the handshake
+            // reply, which is written before the login packet carrying the marker has been read.
+            InputStream stripped = LegacyStreams.stripAfter(in, LegacyStreams.constant(0),
+                    LegacyProtocol.PAYLOAD_MAGIC[0], sink);
+            stripped = LegacyStreams.stripAfter(stripped, LegacyStreams.afterHandshake(),
+                    LegacyProtocol.HANDSHAKE, sink);
+            return restoreOnClose(stripped, socket, declared);
         } catch (Throwable t) {
             log.debug("Not filtering this socket's input (" + t + ")");
             return in;
+        }
+    }
+
+    /**
+     * Puts the configured API back when the connection ends.
+     * <p>
+     * An override is meant to last exactly as long as the visit, and on 1.7 and up the game says
+     * when that is over. Down here nothing does: the only thing that happens when a player is
+     * kicked, disconnects or closes the game is that this socket stops. So that is what is watched
+     * — the end of the stream and its close, whichever comes first — and either one restores.
+     * <p>
+     * The address is taken now rather than then, because a closed socket is not obliged to remember
+     * who it was talking to. Restoring is left to {@code noteLeave}, which does nothing unless this
+     * is still the server whose declaration is in force, so a stale close cannot undo a newer visit.
+     */
+    private static InputStream restoreOnClose(InputStream in, java.net.Socket socket,
+                                              final boolean[] declared) {
+        java.net.InetAddress address = socket.getInetAddress();
+        if (address == null) return in;
+        final String host = address.getHostAddress();
+        final int port = socket.getPort();
+
+        return new java.io.FilterInputStream(in) {
+            private boolean left;
+
+            public int read() throws java.io.IOException {
+                int b = in.read();
+                if (b < 0) leave();
+                return b;
+            }
+
+            public int read(byte[] bytes, int at, int length) throws java.io.IOException {
+                int read = in.read(bytes, at, length);
+                if (read < 0) leave();
+                return read;
+            }
+
+            public void close() throws java.io.IOException {
+                try {
+                    in.close();
+                } finally {
+                    leave();
+                }
+            }
+
+            private void leave() {
+                if (left || !declared[0]) return;
+                left = true;
+                LegacyAnnounce.leave(host, port);
+            }
+        };
+    }
+
+    /**
+     * Called from {@code Socket.close}, which from 1.3 is how a visit ends.
+     * <p>
+     * Unconditional on purpose: whether this socket is the one that declared anything is not a
+     * question worth tracking here, because {@code noteLeave} already asks the only version of it
+     * that matters — is this the server whose declaration is in force. A socket to anywhere else
+     * closing changes nothing.
+     */
+    public static void closing(java.net.Socket socket) {
+        if (socket == null || disabled() || isServer(socket)) return;
+        try {
+            java.net.InetAddress address = socket.getInetAddress();
+            if (address != null) leave(address.getHostAddress(), socket.getPort());
+        } catch (Throwable t) {
+            log.debug("Could not tell whether that connection was the current server (" + t + ")");
+        }
+    }
+
+    /** The other half of {@link #announce}, and reached the same way and for the same reason. */
+    private static void leave(String host, int port) {
+        try {
+            Class.forName("org.unmojang.loki.hooks.ProfileRedirect", true,
+                            ClassLoader.getSystemClassLoader())
+                    .getMethod("noteLeave", String.class, int.class)
+                    .invoke(null, host, Integer.valueOf(port));
+        } catch (Throwable t) {
+            log.debug("Could not put the configured profile API back (" + t + ")");
         }
     }
 
@@ -132,14 +225,20 @@ public final class LegacyAnnounce {
         try {
             if (isServer(socket)) {
                 if (declaration() == null) return out;
-                return LegacyStreams.appendAfter(out, LegacyStreams.afterHandshake(),
-                        LegacyProtocol.HANDSHAKE, new LegacyStreams.Source() {
-                            public String declaration() {
-                                return LegacyAnnounce.declaration();
-                            }
-                        }, markOf(socket));
+                LegacyStreams.Source source = new LegacyStreams.Source() {
+                    public String declaration() {
+                        return LegacyAnnounce.declaration();
+                    }
+                };
+                OutputStream appended = LegacyStreams.appendAfter(out, LegacyStreams.constant(0),
+                        LegacyProtocol.ENCRYPTION_REQUEST, source, markOf(socket));
+                return LegacyStreams.appendAfter(appended, LegacyStreams.afterHandshake(),
+                        LegacyProtocol.HANDSHAKE, source, markOf(socket));
             }
-            return LegacyStreams.markBetaLogin(out);
+            if (Boolean.getBoolean("Loki.no_legacy_handshake_marker")) {
+                return LegacyStreams.markBetaLogin(out);
+            }
+            return LegacyStreams.markModernHandshake(LegacyStreams.markBetaLogin(out));
         } catch (Throwable t) {
             log.debug("Not filtering this socket's output (" + t + ")");
             return out;

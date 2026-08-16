@@ -157,6 +157,100 @@ public final class LegacyProtocol {
     /** How long a name or a level type can plausibly be; past it, this is not a login packet. */
     private static final int STRING_LIMIT = 256;
 
+    // ---------------------------------------------------------------- 1.3 to 1.6.4
+
+    /**
+     * What a Loki client puts on the end of the address it says it connected to.
+     * <p>
+     * From 1.3 the login packet has no spare field left — it stopped carrying a username at all —
+     * and the handshake became four fields: a protocol version, the username, the host and the
+     * port. The host is the one nothing reads: the server already knows its own address, and every
+     * version of this era takes the string and drops it.
+     * <p>
+     * Appending to it is not a liberty being taken for the first time. Forge has appended
+     * {@code \0FML\0} there since 1.3 for exactly this reason, which is both the precedent and the
+     * reason the convention is safe: a separator of NUL is what everything downstream already
+     * expects to find extra data behind.
+     * <p>
+     * The one thing this can reach that a vanilla server cannot is a proxy, which does read the
+     * host. {@code Loki.no_legacy_handshake_marker} turns it off for anyone behind one.
+     */
+    public static final String HOST_MARKER = "\0Loki\0";
+
+    /** The first thing a server of this era writes, and the first thing that is not our block. */
+    public static final byte ENCRYPTION_REQUEST = (byte) 0xFD;
+
+    /**
+     * The whole handshake, once enough of it has arrived to say, or -1 while it has not.
+     * <p>
+     * Id, one byte of protocol version, the username, the host, and four bytes of port. Both
+     * strings have to be walked because the second one's position depends on the first one's
+     * length.
+     */
+    public static int modernHandshakeLength(byte[] packet, int seen) {
+        if (seen < 4) return -1;
+        int at = 2;
+        for (int string = 0; string < 2; string++) {
+            if (seen < at + 2) return -1;
+            int characters = ((packet[at] & 0xFF) << 8) | (packet[at + 1] & 0xFF);
+            if (characters > STRING_LIMIT) return NOT_THIS_SHAPE;
+            at += 2 + characters * 2;
+        }
+        return at + 4;
+    }
+
+    /** Where the host string's own bytes start, counted from the beginning of the handshake. */
+    public static int modernHostAt(byte[] packet) {
+        int username = ((packet[2] & 0xFF) << 8) | (packet[3] & 0xFF);
+        return 4 + username * 2;
+    }
+
+    /** Neither "yes" nor "not yet": these bytes are not the packet being looked for. */
+    public static final int NOT_THIS_SHAPE = -2;
+
+    /**
+     * The same handshake with the marker on the end of its host, and the length field to match.
+     *
+     * @return the rewritten packet, or the one given when it cannot be read as this shape
+     */
+    public static byte[] withHostMarker(byte[] packet, int length) {
+        int end = modernHandshakeLength(packet, length);
+        if (end != length) return packet; // not a whole handshake of this shape, so leave it alone
+
+        int hostAt = modernHostAt(packet);
+        int hostChars = ((packet[hostAt] & 0xFF) << 8) | (packet[hostAt + 1] & 0xFF);
+        int hostEnd = hostAt + 2 + hostChars * 2;
+        int added = HOST_MARKER.length();
+        if (hostChars + added > STRING_LIMIT) return packet;
+
+        byte[] marked = new byte[length + added * 2];
+        System.arraycopy(packet, 0, marked, 0, hostEnd);
+        marked[hostAt] = (byte) ((hostChars + added) >> 8);
+        marked[hostAt + 1] = (byte) (hostChars + added);
+        for (int i = 0; i < added; i++) {
+            marked[hostEnd + i * 2] = (byte) (HOST_MARKER.charAt(i) >> 8);
+            marked[hostEnd + i * 2 + 1] = (byte) HOST_MARKER.charAt(i);
+        }
+        System.arraycopy(packet, hostEnd, marked, hostEnd + added * 2, length - hostEnd);
+        return marked;
+    }
+
+    /** Whether the host in this handshake carries the marker. */
+    public static boolean hasHostMarker(byte[] packet, int length) {
+        if (modernHandshakeLength(packet, length) != length) return false;
+        int hostAt = modernHostAt(packet);
+        int hostChars = ((packet[hostAt] & 0xFF) << 8) | (packet[hostAt + 1] & 0xFF);
+        int wanted = HOST_MARKER.length();
+        if (hostChars < wanted) return false;
+
+        int at = hostAt + 2 + (hostChars - wanted) * 2;
+        for (int i = 0; i < wanted; i++) {
+            char character = (char) (((packet[at + i * 2] & 0xFF) << 8) | (packet[at + i * 2 + 1] & 0xFF));
+            if (character != HOST_MARKER.charAt(i)) return false;
+        }
+        return true;
+    }
+
     /**
      * Walks a client's login packet a byte at a time and says when the eight unused ones go past.
      * <p>

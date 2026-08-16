@@ -376,6 +376,49 @@ public class LegacyStreamsTest {
             }
         }
 
+        // From 1.3 the login packet has no room left, and the marker moves to the end of the host
+        // in the handshake. The bytes below are the ones a 1.3.2 client really sent, recorded by
+        // scripts/login-probe.sh: an id, one byte of protocol version, the username, the address it
+        // was told to connect to, and the port.
+        System.out.println();
+        System.out.println("== 1.3 to 1.6.4, where the marker rides on the host ==");
+        byte[] modern = concat(concat(new byte[]{LegacyProtocol.HANDSHAKE, 39},
+                string("Probe", true)), concat(string("127.0.0.1", true),
+                new byte[]{0, 0, (byte) 0x64, (byte) 0x8a}));
+
+        for (int c = 0; c < chunks.length; c++) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            writeAll(LegacyStreams.markModernHandshake(out), modern, chunks[c]);
+            byte[] sent = out.toByteArray();
+
+            check("the handshake grows by exactly the marker",
+                    sent.length == modern.length + LegacyProtocol.HOST_MARKER.length() * 2,
+                    modern.length + " -> " + sent.length);
+            check("and the port still ends it, so the length field was updated too",
+                    sent[sent.length - 1] == (byte) 0x8a && sent[sent.length - 2] == (byte) 0x64,
+                    null);
+
+            LegacyStreams.Marked flag = new LegacyStreams.Marked();
+            byte[] asRead = readAll(LegacyStreams.watchModernHandshake(
+                    new ByteArrayInputStream(sent), flag), chunks[c]);
+            check("the server finds the marker on the host", flag.isMarked(), null);
+            check("and reads the bytes exactly as they arrived", same(sent, asRead), null);
+
+            // A server without Loki reads the host and drops it, so what it does with the marker is
+            // nothing. What it must never do is find the next packet in the wrong place.
+            LegacyStreams.Marked none = new LegacyStreams.Marked();
+            readAll(LegacyStreams.watchModernHandshake(new ByteArrayInputStream(modern), none), chunks[c]);
+            check("a client without Loki is not taken for one", !none.isMarked(), null);
+
+            // The two eras' filters are stacked on every connection, so each has to leave the
+            // other's handshake alone.
+            byte[] beta = concat(betaHandshake("Tester"), betaLogin("Tester"));
+            ByteArrayOutputStream untouched = new ByteArrayOutputStream();
+            writeAll(LegacyStreams.markModernHandshake(untouched), beta, chunks[c]);
+            check("and a Beta handshake goes through it unchanged",
+                    same(beta, untouched.toByteArray()), null);
+        }
+
         // 1.3 changed the handshake into four fields, and reading it as one string walks off the
         // end of the packet. The filter has to recognise that and stand down rather than wait for
         // a boundary that is not coming.

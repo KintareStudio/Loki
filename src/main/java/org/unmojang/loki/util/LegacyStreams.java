@@ -328,6 +328,117 @@ public final class LegacyStreams {
         };
     }
 
+    /**
+     * Client side, outgoing, 1.3 to 1.6.4: puts the marker on the end of the host in the handshake.
+     * <p>
+     * The one filter here that changes a packet's length, and the only one that may: the host is a
+     * counted string, so a server reads exactly as many characters as it is told and finds the next
+     * packet where it expects to. That is also why the whole handshake is held back until it is
+     * complete — the count comes before the characters, and it cannot be written until they are
+     * all known.
+     */
+    public static OutputStream markModernHandshake(OutputStream out) {
+        return new FilterOutputStream(out) {
+            private byte[] held = new byte[64];
+            private int seen;
+            private boolean done;
+            private boolean applicable = true;
+
+            public void write(int b) throws IOException {
+                write(new byte[]{(byte) b}, 0, 1);
+            }
+
+            public void write(byte[] bytes, int at, int length) throws IOException {
+                if (done || !applicable) {
+                    out.write(bytes, at, length);
+                    return;
+                }
+                if (seen == 0 && length > 0 && bytes[at] != LegacyProtocol.HANDSHAKE) {
+                    applicable = false;
+                    out.write(bytes, at, length);
+                    return;
+                }
+
+                if (seen + length > held.length) {
+                    byte[] bigger = new byte[Math.max(held.length * 2, seen + length)];
+                    System.arraycopy(held, 0, bigger, 0, seen);
+                    held = bigger;
+                }
+                System.arraycopy(bytes, at, held, seen, length);
+                seen += length;
+
+                int end = LegacyProtocol.modernHandshakeLength(held, seen);
+                if (end == LegacyProtocol.NOT_THIS_SHAPE || seen > LegacyProtocol.PAYLOAD_MAX_BYTES) {
+                    // Not the packet this reads, so hand back everything held and stand down
+                    applicable = false;
+                    out.write(held, 0, seen);
+                    return;
+                }
+                if (end < 0 || seen < end) return; // still arriving
+
+                byte[] marked = LegacyProtocol.withHostMarker(held, end);
+                out.write(marked, 0, marked.length);
+                if (seen > end) out.write(held, end, seen - end); // whatever came after it
+                done = true;
+            }
+
+            public void flush() throws IOException {
+                // Held bytes are deliberately not flushed: half a handshake is not a packet, and
+                // the rest of it is already on its way from the game.
+                if (done || !applicable) out.flush();
+            }
+        };
+    }
+
+    /**
+     * Server side, incoming, 1.3 to 1.6.4: reads the host to see whether the marker is on it.
+     * <p>
+     * Read-only, like its Beta counterpart. The marker stays on the string and reaches the server's
+     * own parser, which has dropped the host on the floor since 1.3.
+     */
+    public static InputStream watchModernHandshake(InputStream in, final Marked marked) {
+        return new FilterInputStream(in) {
+            private byte[] held = new byte[64];
+            private int seen;
+            private boolean done;
+            private boolean applicable = true;
+
+            public int read() throws IOException {
+                byte[] one = new byte[1];
+                int read = read(one, 0, 1);
+                return read <= 0 ? -1 : one[0] & 0xFF;
+            }
+
+            public int read(byte[] bytes, int at, int length) throws IOException {
+                int read = in.read(bytes, at, length);
+                if (read <= 0 || done || !applicable) return read;
+
+                if (seen == 0 && bytes[at] != LegacyProtocol.HANDSHAKE) {
+                    applicable = false;
+                    return read;
+                }
+                if (seen + read > held.length) {
+                    byte[] bigger = new byte[Math.max(held.length * 2, seen + read)];
+                    System.arraycopy(held, 0, bigger, 0, seen);
+                    held = bigger;
+                }
+                System.arraycopy(bytes, at, held, seen, read);
+                seen += read;
+
+                int end = LegacyProtocol.modernHandshakeLength(held, seen);
+                if (end == LegacyProtocol.NOT_THIS_SHAPE || seen > LegacyProtocol.PAYLOAD_MAX_BYTES) {
+                    applicable = false;
+                    return read;
+                }
+                if (end < 0 || seen < end) return read;
+
+                if (LegacyProtocol.hasHostMarker(held, end)) marked.mark();
+                done = true;
+                return read;
+            }
+        };
+    }
+
     /** Server side, incoming: the same walk, reading the seed instead of writing it. */
     public static InputStream watchBetaLogin(InputStream in, final Marked marked) {
         return new FilterInputStream(in) {

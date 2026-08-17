@@ -201,13 +201,9 @@ public final class LegacyStreams {
      */
     public static OutputStream markBetaLogin(OutputStream out) {
         return new FilterOutputStream(out) {
-            private final byte[] head = new byte[8];
+            private final LegacyProtocol.BeforeLogin before = new LegacyProtocol.BeforeLogin();
             private boolean done;
             private boolean applicable = true;
-            private boolean inLogin;
-            private int seen;          // within the handshake, which is all this counts itself
-            private int handshakeEnd = -1;
-            private LegacyProtocol.LoginWalk walk;
 
             public void write(int b) throws IOException {
                 out.write(done || !applicable ? b : filter((byte) b));
@@ -228,35 +224,10 @@ public final class LegacyStreams {
                 // Checked here and not only in write: one write can carry the whole login, and
                 // giving up partway through it has to stop this loop too
                 if (done || !applicable) return b;
-                if (!inLogin) {
-                    if (seen < head.length) head[seen] = b;
-                    if (seen == 0 && b == LegacyProtocol.LOGIN) {
-                        // No handshake at all, which is how it was until a1.0.16: the login packet
-                        // is the first thing sent. Those versions write a byte a character, so the
-                        // walk is told so rather than reading it off a handshake that never came.
-                        inLogin = true;
-                        walk = new LegacyProtocol.LoginWalk(false, false);
-                        return filter(b);
-                    }
-                    if (seen == 0 && b != LegacyProtocol.HANDSHAKE) {
-                        applicable = false; // not a handshake, so not a game connection of this era
-                        return b;
-                    }
-                    seen++;
-                    if (handshakeEnd < 0) handshakeEnd = LegacyProtocol.handshakeLength(head, seen);
-                    if (handshakeEnd == NEVER) {
-                        applicable = false; // a handshake of a shape this does not read: 1.3 and up
-                        return b;
-                    }
-                    if (handshakeEnd > 0 && seen >= handshakeEnd) {
-                        inLogin = true;
-                        // The login packet writes its strings the way the handshake wrote its own,
-                        // so the walk is told which of the two that was.
-                        walk = new LegacyProtocol.LoginWalk(LegacyProtocol.isWide(head), true);
-                        seen = 0;
-                    }
-                    return b;
-                }
+
+                LegacyProtocol.LoginWalk walk = before.step(b);
+                if (before.isImpossible()) applicable = false;
+                if (walk == null) return b; // still the handshake, which nothing is written into
 
                 // Only over what was expected to be there: zeros for a seed a client has no value
                 // for, and the letters of "Password" for the field that stands in its place in the
@@ -289,8 +260,7 @@ public final class LegacyStreams {
      */
     public static OutputStream markModernHandshake(OutputStream out) {
         return new FilterOutputStream(out) {
-            private byte[] held = new byte[64];
-            private int seen;
+            private final LegacyProtocol.Handshake held = new LegacyProtocol.Handshake();
             private boolean done;
             private boolean applicable = true;
 
@@ -303,32 +273,20 @@ public final class LegacyStreams {
                     out.write(bytes, at, length);
                     return;
                 }
-                if (seen == 0 && length > 0 && bytes[at] != LegacyProtocol.HANDSHAKE) {
-                    applicable = false;
-                    out.write(bytes, at, length);
-                    return;
-                }
 
-                if (seen + length > held.length) {
-                    byte[] bigger = new byte[Math.max(held.length * 2, seen + length)];
-                    System.arraycopy(held, 0, bigger, 0, seen);
-                    held = bigger;
-                }
-                System.arraycopy(bytes, at, held, seen, length);
-                seen += length;
-
-                int end = LegacyProtocol.modernHandshakeLength(held, seen);
-                if (end == LegacyProtocol.NOT_THIS_SHAPE || seen > LegacyProtocol.PAYLOAD_MAX_BYTES) {
+                int end = held.add(bytes, at, length);
+                if (end == LegacyProtocol.NOT_THIS_SHAPE) {
                     // Not the packet this reads, so hand back everything held and stand down
                     applicable = false;
-                    out.write(held, 0, seen);
+                    out.write(held.packet(), 0, held.gathered());
                     return;
                 }
-                if (end < 0 || seen < end) return; // still arriving
+                if (end < 0 || held.gathered() < end) return; // still arriving
 
-                byte[] marked = LegacyProtocol.withHostMarker(held, end);
+                byte[] marked = LegacyProtocol.withHostMarker(held.packet(), end);
                 out.write(marked, 0, marked.length);
-                if (seen > end) out.write(held, end, seen - end); // whatever came after it
+                int after = held.gathered() - end;
+                if (after > 0) out.write(held.packet(), end, after); // whatever came after it
                 done = true;
             }
 
@@ -348,10 +306,8 @@ public final class LegacyStreams {
      */
     public static InputStream watchModernHandshake(InputStream in, final Marked marked) {
         return new FilterInputStream(in) {
-            private byte[] held = new byte[64];
-            private int seen;
+            private final LegacyProtocol.Handshake held = new LegacyProtocol.Handshake();
             private boolean done;
-            private boolean applicable = true;
 
             public int read() throws IOException {
                 byte[] one = new byte[1];
@@ -361,28 +317,16 @@ public final class LegacyStreams {
 
             public int read(byte[] bytes, int at, int length) throws IOException {
                 int read = in.read(bytes, at, length);
-                if (read <= 0 || done || !applicable) return read;
+                if (read <= 0 || done) return read;
 
-                if (seen == 0 && bytes[at] != LegacyProtocol.HANDSHAKE) {
-                    applicable = false;
+                int end = held.add(bytes, at, read);
+                if (end == LegacyProtocol.NOT_THIS_SHAPE) {
+                    done = true;
                     return read;
                 }
-                if (seen + read > held.length) {
-                    byte[] bigger = new byte[Math.max(held.length * 2, seen + read)];
-                    System.arraycopy(held, 0, bigger, 0, seen);
-                    held = bigger;
-                }
-                System.arraycopy(bytes, at, held, seen, read);
-                seen += read;
+                if (end < 0 || held.gathered() < end) return read;
 
-                int end = LegacyProtocol.modernHandshakeLength(held, seen);
-                if (end == LegacyProtocol.NOT_THIS_SHAPE || seen > LegacyProtocol.PAYLOAD_MAX_BYTES) {
-                    applicable = false;
-                    return read;
-                }
-                if (end < 0 || seen < end) return read;
-
-                if (LegacyProtocol.hasHostMarker(held, end)) marked.mark();
+                if (LegacyProtocol.hasHostMarker(held.packet(), end)) marked.mark();
                 done = true;
                 return read;
             }
@@ -392,14 +336,10 @@ public final class LegacyStreams {
     /** Server side, incoming: the same walk, reading the seed instead of writing it. */
     public static InputStream watchBetaLogin(InputStream in, final Marked marked) {
         return new FilterInputStream(in) {
-            private final byte[] head = new byte[8];
+            private final LegacyProtocol.BeforeLogin before = new LegacyProtocol.BeforeLogin();
             private final byte[] seed = new byte[LegacyProtocol.LOGIN_MARKER.length];
             private boolean done;
             private boolean applicable = true;
-            private boolean inLogin;
-            private int seen;
-            private int handshakeEnd = -1;
-            private LegacyProtocol.LoginWalk walk;
 
             public int read() throws IOException {
                 int b = in.read();
@@ -417,33 +357,10 @@ public final class LegacyStreams {
 
             private void inspect(byte b) {
                 if (done || !applicable) return;
-                if (!inLogin) {
-                    if (seen < head.length) head[seen] = b;
-                    if (seen == 0 && b == LegacyProtocol.LOGIN) {
-                        inLogin = true; // no handshake, as it was until a1.0.16
-                        walk = new LegacyProtocol.LoginWalk(false, false);
-                        inspect(b);
-                        return;
-                    }
-                    if (seen == 0 && b != LegacyProtocol.HANDSHAKE) {
-                        applicable = false;
-                        return;
-                    }
-                    seen++;
-                    if (handshakeEnd < 0) handshakeEnd = LegacyProtocol.handshakeLength(head, seen);
-                    if (handshakeEnd == NEVER) {
-                        applicable = false; // a handshake of a shape this does not read: 1.3 and up
-                        return;
-                    }
-                    if (handshakeEnd > 0 && seen >= handshakeEnd) {
-                        inLogin = true;
-                        // The login packet writes its strings the way the handshake wrote its own,
-                        // so the walk is told which of the two that was.
-                        walk = new LegacyProtocol.LoginWalk(LegacyProtocol.isWide(head), true);
-                        seen = 0;
-                    }
-                    return;
-                }
+
+                LegacyProtocol.LoginWalk walk = before.step(b);
+                if (before.isImpossible()) applicable = false;
+                if (walk == null) return; // still the handshake, which carries no marker
 
                 int index = walk.step(b);
                 if (index >= 0) {

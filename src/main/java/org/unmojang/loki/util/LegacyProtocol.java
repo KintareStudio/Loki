@@ -19,11 +19,6 @@ package org.unmojang.loki.util;
  * that has not changed. A server without Loki is sent a marker in a field it ignores, and answers
  * normally; the client finds no payload and carries on with whatever it was configured with. Every
  * combination degrades to what happens today.
- *
- * <h2>Classic</h2>
- * Both identification packets are 131 bytes: an id, a protocol version, two 64-byte space-padded
- * strings and one trailing byte. The client's trailing byte is unused, and using it to announce an
- * extended client is what CPE has done for years, so servers of that era are known to tolerate it.
  */
 public final class LegacyProtocol {
     /** Player and Server Identification alike. */
@@ -63,15 +58,10 @@ public final class LegacyProtocol {
     /**
      * How long the handshake is, once its length field has arrived, or -1 while it has not.
      * <p>
-     * A string on this wire is a two byte count of characters followed by that many UTF-16BE
-     * characters, so three bytes are enough to know where the packet ends. That is the boundary the
-     * announcement uses in both directions: the payload goes immediately after it, in the place the
-     * login packet would otherwise start, and the client knows to look there because 0xFE is not a
-     * packet id any server of this era sends.
-     * <p>
-     * Deliberately not the end of the login packet, which would have been the obvious choice: its
-     * trailing fields differ between versions and getting them wrong by one byte would corrupt the
-     * connection. The handshake is one string and has been since Alpha.
+     * This is the boundary the block goes after, and deliberately not the end of the login packet,
+     * which would have been the obvious choice: its trailing fields differ between versions and
+     * getting them wrong by one byte would corrupt the connection. The handshake is one string and
+     * has been since Alpha.
      */
     public static int handshakeLength(byte[] head, int seen) {
         if (seen < 4) return -1;
@@ -227,6 +217,49 @@ public final class LegacyProtocol {
             at += 2 + characters * 2;
         }
         return at + 4;
+    }
+
+    /**
+     * A 1.3 handshake as it arrives, which is not necessarily all at once.
+     * <p>
+     * It carries two strings, so its length is not known until the first one has been read, and a
+     * socket is free to deliver it a byte at a time. Three places need it gathered — the client
+     * writing its marker, a server reading for one, and a proxy doing the same over a channel — and
+     * this is that, once.
+     */
+    public static final class Handshake {
+        private byte[] bytes = new byte[64];
+        private int length;
+
+        /**
+         * Takes bytes in and says where that leaves things.
+         * <p>
+         * They are kept whatever the answer, including when the answer is that this was never a
+         * handshake: a caller that was holding them back has to be able to hand them over again,
+         * and it can only do that if they are still here.
+         *
+         * @return the whole packet's length, -1 while unknown, or {@link #NOT_THIS_SHAPE}
+         */
+        public int add(byte[] from, int at, int count) {
+            boolean wrongPacket = length == 0 && count > 0 && from[at] != HANDSHAKE;
+            if (length + count > bytes.length) {
+                byte[] bigger = new byte[Math.max(bytes.length * 2, length + count)];
+                System.arraycopy(bytes, 0, bigger, 0, length);
+                bytes = bigger;
+            }
+            System.arraycopy(from, at, bytes, length, count);
+            length += count;
+            if (wrongPacket || length > PAYLOAD_MAX_BYTES) return NOT_THIS_SHAPE;
+            return modernHandshakeLength(bytes, length);
+        }
+
+        public byte[] packet() {
+            return bytes;
+        }
+
+        public int gathered() {
+            return length;
+        }
     }
 
     /** Where the host string's own bytes start, counted from the beginning of the handshake. */
@@ -406,6 +439,49 @@ public final class LegacyProtocol {
         /** What the client said it was, once its first five bytes have gone past. */
         public int protocol() {
             return protocol;
+        }
+    }
+
+    /**
+     * The handshake in front of a login packet, and the hand-over to whoever reads that.
+     * <p>
+     * Both ends of the Alpha and Beta announcement have to get past the same three questions before
+     * they can do anything: is this a game connection of that era at all, does it open with a
+     * handshake or go straight to the login, and how does this client write a string. The answers
+     * are the same on both sides, so they are worked out once here.
+     */
+    public static final class BeforeLogin {
+        private final byte[] head = new byte[8];
+        private int seen;
+        private int end = -1;
+        private LoginWalk walk;
+        private boolean impossible;
+
+        /**
+         * @return the walk to hand this byte to, or null while the byte is still the handshake's
+         */
+        public LoginWalk step(byte b) {
+            if (walk != null) return walk;
+
+            // No handshake at all, which is how it was until a1.0.16: the login is the first packet,
+            // and those versions write a byte a character.
+            if (seen == 0 && b == LOGIN) return walk = new LoginWalk(false, false);
+            if (seen == 0 && b != HANDSHAKE) {
+                impossible = true;
+                return null;
+            }
+            if (end > 0 && seen >= end) return walk = new LoginWalk(isWide(head), true);
+
+            if (seen < head.length) head[seen] = b;
+            seen++;
+            if (end < 0) end = handshakeLength(head, seen);
+            if (end == NOT_THIS_SHAPE) impossible = true; // 1.3 and up: a handshake of four fields
+            return null;
+        }
+
+        /** Whether this connection is not one the announcement can read. */
+        public boolean isImpossible() {
+            return impossible;
         }
     }
 

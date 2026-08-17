@@ -5,25 +5,20 @@ import org.unmojang.loki.util.logger.NilLogger;
 import java.nio.ByteBuffer;
 
 /**
- * The announcement on Classic, which is the one era that does not use a socket's streams.
+ * The announcement where there are no streams to filter: on the channel itself.
  * <p>
- * Both ends of a Classic connection are non-blocking NIO — the client opens a {@code SocketChannel}
- * and the server accepts them through a {@code ServerSocketChannel} — so the four stream filters
- * cannot reach it. The mechanism is the same as everywhere else and only the plumbing changes: a
- * marker the client writes into a byte nothing reads, and a block the server sends back to a client
- * that marked itself, which that client takes out before the game sees it.
- *
- * <h2>Where the marker goes</h2>
- * Player Identification is 131 bytes — an id, a protocol version, two 64-byte space-padded strings
- * and one trailing byte — and that trailing byte is unused. Announcing an extended client there is
- * what CPE has done for years, so servers of the era are known to tolerate it. It is not CPE's own
- * {@code 0x42}: that claims to speak the extension protocol, which Loki does not implement.
- *
- * <h2>Where the block goes</h2>
- * In front of everything the server sends, rather than after its identification. It can be, here:
- * the client speaks first on a Classic connection, so by the time the server writes a byte it has
- * already read the marker. The client knows to look because {@code 0xFE} is not a packet id any
- * Classic server sends.
+ * Two things end up here, for the same reason. Classic, because both its ends are non-blocking NIO
+ * and always were. And 1.3 to 1.6.4 when a proxy is serving it, a proxy being a Netty program
+ * speaking a protocol older than Netty — so the stream filters that handle that era on a real
+ * server never meet its connections, and the Netty its handlers would go in may be too old to
+ * accept one.
+ * <p>
+ * The two are told apart by their first byte: Classic opens with an identification, and 1.3 with a
+ * handshake. After that only two things differ — where the marker sits, and how the block is framed
+ * — and {@link LegacyProtocol} owns both of those.
+ * <p>
+ * The block goes in front of everything the server writes rather than after its first packet. It
+ * can, on both: the client speaks first, so the marker has been read before a byte goes back.
  *
  * <h2>Non-blocking</h2>
  * Which is what most of this class is about. A write may take part of what it was given and a read
@@ -70,8 +65,7 @@ public final class ClassicChannels {
          */
         int shape = UNKNOWN;
         /** Server, 1.3 to 1.6.4: the handshake as it arrives, since it may come in pieces. */
-        byte[] handshake = new byte[512];
-        int handshakeLength;
+        LegacyProtocol.Handshake handshake = new LegacyProtocol.Handshake();
         /** Client: what the server declared, picked up by whoever asks next. */
         public String declaration;
         /**
@@ -265,21 +259,19 @@ public final class ClassicChannels {
      * reading it above, which drops the host either way.
      */
     private static void serverReadModern(Conn conn, ByteBuffer dst, int read, int from) {
-        if (conn.marked || conn.handshake == null) return;
+        if (conn.handshake == null) return;
 
-        for (int i = 0; i < read && conn.handshakeLength < conn.handshake.length; i++) {
-            conn.handshake[conn.handshakeLength++] = dst.get(from + i);
-        }
+        byte[] arrived = new byte[read];
+        for (int i = 0; i < read; i++) arrived[i] = dst.get(from + i);
 
-        int end = LegacyProtocol.modernHandshakeLength(conn.handshake, conn.handshakeLength);
-        if (end == LegacyProtocol.NOT_THIS_SHAPE
-                || conn.handshakeLength >= conn.handshake.length) {
-            conn.handshake = null; // not a handshake of this shape, or longer than one can be
+        int end = conn.handshake.add(arrived, 0, read);
+        if (end == LegacyProtocol.NOT_THIS_SHAPE) {
+            conn.handshake = null;
             return;
         }
-        if (end < 0 || conn.handshakeLength < end) return; // still arriving
+        if (end < 0 || conn.handshake.gathered() < end) return; // still arriving
 
-        if (LegacyProtocol.hasHostMarker(conn.handshake, end)) {
+        if (LegacyProtocol.hasHostMarker(conn.handshake.packet(), end)) {
             conn.marked = true;
             log.debug("A 1.3 to 1.6.4 client marked itself on this connection");
         }

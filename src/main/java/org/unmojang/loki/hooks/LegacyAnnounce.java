@@ -11,27 +11,11 @@ import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-/**
- * Where the pre-1.7 announcement is decided: which end of the connection this is, and whether the
- * connection is one of ours at all.
- * <p>
- * The stream filters are installed from {@code java.net.Socket}, which means every socket in the
- * process passes through here — an HTTP request Loki itself makes as much as a game connection. So
- * the filters are built to notice, on the very first byte, that they are looking at something else
- * and step aside: a request that starts with {@code GET} is not a Classic identification packet and
- * is never touched again.
- * <p>
- * A socket handed out by {@code ServerSocket.accept} is this process acting as a server; anything
- * else is it acting as a client. That is the only role detection needed, and it does not depend on
- * knowing whether the JVM is running a game or a server.
- */
 public final class LegacyAnnounce {
     private static final NilLogger log = NilLogger.get("Loki");
 
-    /** Sockets that arrived through accept, so this end is the server on them. */
     private static final Map<Object, Boolean> accepted =
             Collections.synchronizedMap(new WeakHashMap<Object, Boolean>());
-    /** Whether the client on a given accepted socket marked itself. */
     private static final Map<Object, LegacyStreams.Marked> marks =
             Collections.synchronizedMap(new WeakHashMap<Object, LegacyStreams.Marked>());
 
@@ -41,7 +25,6 @@ public final class LegacyAnnounce {
         return Boolean.getBoolean("Loki.disable_legacy_announce");
     }
 
-    /** Called from {@code ServerSocket.accept}, which is how this end learns it is the server. */
     public static Object accepted(Object socket) {
         if (socket != null && !disabled()) {
             accepted.put(socket, Boolean.TRUE);
@@ -50,19 +33,6 @@ public final class LegacyAnnounce {
         return socket;
     }
 
-    /**
-     * How many game connections this process is currently serving.
-     * <p>
-     * Which is how it knows what it is, without being told. A client dials out and never accepts. A
-     * server accepts and never dials. A proxy is doing both at once, and only while it is doing
-     * both at once is a declaration arriving on a connection it made a declaration from a server it
-     * is standing in front of.
-     * <p>
-     * Live connections rather than "has ever accepted", because a player who opens a world to the
-     * LAN accepts connections too. That must not leave their client ignoring what servers declare
-     * for the rest of the session, and it does not: by the time they join one, they are serving
-     * nobody.
-     */
     private static int servingCount;
 
     private static void nowServing(int change) {
@@ -70,12 +40,9 @@ public final class LegacyAnnounce {
             servingCount += change;
             if (servingCount < 0) servingCount = 0;
         }
-        // Where the other class loader can see it: the announcement lives on the bootstrap path and
-        // the redirect it feeds does not, and a property is what the two already share.
         System.setProperty(SERVING, servingCount > 0 ? "true" : "false");
     }
 
-    /** Set while this process has a player connected to it, and read by {@code ProfileRedirect}. */
     public static final String SERVING = "Loki.serving";
 
     private static boolean isServer(Object socket) {
@@ -93,13 +60,6 @@ public final class LegacyAnnounce {
         }
     }
 
-    /**
-     * What this server tells a Loki client: the same object it would put in a status response from
-     * 1.7 onwards, so that both eras declare one thing in one format.
-     * <p>
-     * Built through the system class loader, since this class sits on the bootstrap path and the
-     * advertiser does not.
-     */
     private static String declaration() {
         try {
             Object body = Class.forName("org.unmojang.loki.hooks.ProfileAdvertiser", true,
@@ -112,17 +72,10 @@ public final class LegacyAnnounce {
         }
     }
 
-    /**
-     * Called from {@code Socket.getInputStream}. On a server this watches for the client's marker;
-     * on a client it takes the server's block back out before the game reads it.
-     */
     public static InputStream wrapInput(InputStream in, final java.net.Socket socket) {
         if (in == null || disabled()) return in;
         try {
             if (isServer(socket)) {
-                // Both, nested, rather than a guess about which era is connecting: each stands
-                // itself down on a handshake of the shape the other reads, so whichever arrives
-                // meets exactly one filter that is still listening.
                 return LegacyStreams.watchModernHandshake(
                         LegacyStreams.watchBetaLogin(in, markOf(socket)), markOf(socket));
             }
@@ -134,11 +87,6 @@ public final class LegacyAnnounce {
                     announce(socket, declaration);
                 }
             };
-            // From 1.3 the block is the first thing a server writes, because by then it has read
-            // the handshake the marker is in; before that it can only come after the handshake
-            // reply, which is written before the login packet carrying the marker has been read.
-            // It is also a plugin message there rather than raw bytes, because from 1.3 there may
-            // be a proxy in between, and a proxy decodes what goes past it.
             InputStream stripped = LegacyStreams.stripAfter(in, LegacyStreams.constant(0),
                     LegacyProtocol.PLUGIN_MESSAGE.firstByte(), sink, LegacyProtocol.PLUGIN_MESSAGE);
             stripped = LegacyStreams.stripAfter(stripped, LegacyStreams.constant(0),
@@ -152,18 +100,6 @@ public final class LegacyAnnounce {
         }
     }
 
-    /**
-     * Puts the configured API back when the connection ends.
-     * <p>
-     * An override is meant to last exactly as long as the visit, and on 1.7 and up the game says
-     * when that is over. Down here nothing does: the only thing that happens when a player is
-     * kicked, disconnects or closes the game is that this socket stops. So that is what is watched
-     * — the end of the stream and its close, whichever comes first — and either one restores.
-     * <p>
-     * The address is taken now rather than then, because a closed socket is not obliged to remember
-     * who it was talking to. Restoring is left to {@code noteLeave}, which does nothing unless this
-     * is still the server whose declaration is in force, so a stale close cannot undo a newer visit.
-     */
     private static InputStream restoreOnClose(InputStream in, java.net.Socket socket,
                                               final boolean[] declared) {
         java.net.InetAddress address = socket.getInetAddress();
@@ -202,9 +138,6 @@ public final class LegacyAnnounce {
         };
     }
 
-    // ------------------------------------------------------------------ Classic, over NIO
-
-    /** One state per channel, for the era that never asks a socket for its streams. */
     private static final Map<Object, org.unmojang.loki.util.ClassicChannels.Conn> channels =
             Collections.synchronizedMap(
                     new WeakHashMap<Object, org.unmojang.loki.util.ClassicChannels.Conn>());
@@ -220,7 +153,6 @@ public final class LegacyAnnounce {
         }
     }
 
-    /** Called from {@code ServerSocketChannel.accept}, the NIO half of learning the role. */
     public static Object acceptedChannel(Object channel) {
         if (channel != null && !disabled()) {
             connOf(channel).server = true;
@@ -229,7 +161,6 @@ public final class LegacyAnnounce {
         return channel;
     }
 
-    /** Called at the top of {@code SocketChannel.write}. */
     public static void beforeChannelWrite(final Object channel, java.nio.ByteBuffer src) {
         if (channel == null || src == null || disabled()) return;
         try {
@@ -252,7 +183,6 @@ public final class LegacyAnnounce {
         }
     }
 
-    /** Called before every return of {@code SocketChannel.write}. */
     public static int afterChannelWrite(int written, Object channel, java.nio.ByteBuffer src) {
         if (channel == null || src == null || disabled()) return written;
         try {
@@ -263,7 +193,6 @@ public final class LegacyAnnounce {
         }
     }
 
-    /** Called before every return of {@code SocketChannel.read}. */
     public static int afterChannelRead(int read, Object channel, java.nio.ByteBuffer dst) {
         if (channel == null || dst == null || disabled()) return read;
         try {
@@ -282,11 +211,8 @@ public final class LegacyAnnounce {
         }
     }
 
-    /** Called from {@code SocketChannel.close}, since a visit here ends the same way. */
     public static void closingChannel(Object channel) {
         if (channel == null || disabled()) return;
-        // Taken out here rather than left to be collected, so that the count of who is being served
-        // falls the moment a player leaves rather than whenever the map next notices.
         org.unmojang.loki.util.ClassicChannels.Conn conn;
         synchronized (channels) {
             conn = channels.remove(channel);
@@ -296,9 +222,6 @@ public final class LegacyAnnounce {
             nowServing(-1);
             return;
         }
-        // Only a channel that was told something has anything to put back, and asking any other
-        // one costs a socket lookup on every connection a Netty program ever closes — which on a
-        // proxy is all of them, and on some of them the lookup is not even allowed.
         if (!conn.declaredHere) return;
 
         try {
@@ -318,18 +241,10 @@ public final class LegacyAnnounce {
         }
     }
 
-    /**
-     * Called from {@code Socket.close}, which from 1.3 is how a visit ends.
-     * <p>
-     * Unconditional on purpose: whether this socket is the one that declared anything is not a
-     * question worth tracking here, because {@code noteLeave} already asks the only version of it
-     * that matters — is this the server whose declaration is in force. A socket to anywhere else
-     * closing changes nothing.
-     */
     public static void closing(java.net.Socket socket) {
         if (socket == null || disabled()) return;
         if (accepted.remove(socket) != null) {
-            nowServing(-1); // a player has left this server, which is one fewer being served
+            nowServing(-1);
             return;
         }
         try {
@@ -340,7 +255,6 @@ public final class LegacyAnnounce {
         }
     }
 
-    /** The other half of {@link #announce}, and reached the same way and for the same reason. */
     private static void leave(String host, int port) {
         try {
             Class.forName("org.unmojang.loki.hooks.ProfileRedirect", true,
@@ -352,16 +266,10 @@ public final class LegacyAnnounce {
         }
     }
 
-    /**
-     * Hands what a server declared to the same place the 1.7+ declaration goes, so that from here
-     * on there is one override and one set of rules about what it may move.
-     */
     private static void announce(java.net.Socket socket, String declaration) {
         try {
             java.net.InetAddress address = socket.getInetAddress();
-            if (address == null) return; // closed under us, so there is no server to be on
-            // Through the system loader on purpose: this class is on the bootstrap path, and the
-            // ProfileRedirect that must hear about it is the one the game own lookups consult.
+            if (address == null) return;
             Class.forName("org.unmojang.loki.hooks.ProfileRedirect", true,
                             ClassLoader.getSystemClassLoader())
                     .getMethod("noteDeclaredJson", String.class, int.class, String.class)
@@ -371,10 +279,6 @@ public final class LegacyAnnounce {
         }
     }
 
-    /**
-     * Called from {@code Socket.getOutputStream}. On a client this writes the marker into the
-     * identification packet; on a server it appends the block for a client that marked itself.
-     */
     public static OutputStream wrapOutput(OutputStream out, java.net.Socket socket) {
         if (out == null || disabled()) return out;
         try {
@@ -388,9 +292,6 @@ public final class LegacyAnnounce {
                 OutputStream appended = LegacyStreams.appendAfter(out, LegacyStreams.constant(0),
                         LegacyProtocol.ENCRYPTION_REQUEST, source, markOf(socket),
                         LegacyProtocol.PLUGIN_MESSAGE);
-                // Until a1.0.16 there is no handshake either way, so the server's first packet is
-                // its login reply and the block goes in front of it. It knows by then who it is
-                // talking to, because the client's login is the first thing it read.
                 appended = LegacyStreams.appendAfter(appended, LegacyStreams.constant(0),
                         LegacyProtocol.LOGIN, source, markOf(socket), LegacyProtocol.RAW);
                 return LegacyStreams.appendAfter(appended, LegacyStreams.afterHandshake(),

@@ -17,12 +17,6 @@ See [doc/usage.md](doc/usage.md) to learn how to use Loki on clients and servers
 
 See [doc/configuration.md](doc/configuration.md) for documentation of the configuration options.
 
-## Server-declared profile API
-
-A server can point Loki clients at its own API server for profile queries, so players are visible
-even when the client and the server do not share an API server. See
-[doc/profile-redirect.md](doc/profile-redirect.md).
-
 ## Troubleshooting
 
 [doc/troubleshooting.md](doc/troubleshooting.md) has some helpful tips, but it's not complete. Feel free to file an issue if you're having problems.
@@ -36,8 +30,6 @@ Install Apache Ant, and run `ant ivy` to fetch Apache Ivy; you only need to do t
 Run `ant` to build. Your compiled jar will be placed in `build/dist/Loki-x.x.x.jar`.
 
 You *can* build with Java 9 or later, however your build will lack Java 5-7 support. To do this, use `ant -DjavaTarget=1.8`
-
-Run `ant test` for the tests. They stand up their own servers and do not touch the network. On Java 9 or later this needs `-DjavaTarget=1.8` too, since it builds Loki first.
 
 ## FAQ
 See [doc/faq.md](doc/faq.md)

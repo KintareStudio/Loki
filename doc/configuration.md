@@ -39,22 +39,20 @@ Loki supports JVM arguments to enable or disable some behaviour.
   -DLoki.disable_profile_lookup=true
   ```
 
-- Ignore a server's declared profile API [^3]
+- Ignore a server's declared API server [^3]
   ```
   -DLoki.disable_profile_redirect=true
   ```
 
-- Keep enforcing the texture allowlist on a server that declared no `skinDomains`, instead of
-  accepting any texture host for the duration [^3]
+- Keep enforcing the texture allowlist on a server that declared no `skinDomains` [^3]
   ```
   -DLoki.strict_texture_domains=true
   ```
 
-- Stop a server declaring its own API server to Loki clients [^3]
+- Stop a server declaring its API server to Loki clients [^3]
   ```
   -DLoki.disable_profile_advertise=true
   ```
-
 
 - Re-enable patchy (server blocking)
   ```
@@ -70,10 +68,9 @@ Loki supports JVM arguments to enable or disable some behaviour.
   ```
   -DLoki.enforce_secure_profile=true
   ```
-  On a server this flag does one more thing: it tells the Loki clients that join that signatures are
-  checked here, so they check too for as long as they are on it. [^3]
+  On a server, this also tells the Loki clients that join to check as well. [^3]
 
-- Refuse it instead, and check nowhere, whatever a server asks for [^3]
+- Refuse it, whatever a server asks for [^3]
   ```
   -DLoki.enforce_secure_profile=false
   ```
@@ -111,8 +108,8 @@ authlib-injector takes:
 ```
 
 It is used in place of fetching that document, so a session can start without waiting on the API
-server, or at all when it is unreachable. It does not replace `/publickeys`: signing keys are still
-asked of that endpoint first, and the prefetched document is what answers when it has nothing.
+server. Signing keys are still asked of `/publickeys` first; the prefetched document answers when
+that endpoint has nothing.
 
 ## Changing the Default API Servers
 
@@ -144,6 +141,6 @@ ServicesHost: https://drasl.unmojang.org/services
 ```
 
 [^1]: Username-based profile lookups allow for displaying textures on offline mode servers.
-[^3]: A 1.7+ server can name an API server for Loki to resolve profile queries against, so players are visible even when the client and the server do not share an API server. Only profile reads are affected; see [profile-redirect.md](profile-redirect.md).
-[^4]: Without this, the signature checks return true without looking, which is what lets an API server that does not sign at all work. With it, they are checked against every key the API server publishes — `signaturePublickeys` in authlib-injector metadata, or `profilePropertyKeys` and `playerCertificateKeys` from `/publickeys` — plus Mojang's own key, which authlib bundles up to 1.19.4 and which is what makes a profile proxied from a fallback API server verify. Trusting a set rather than one key is also what keeps a key rotation from turning every player into Steve. The two kinds of key are kept apart: a property key cannot vouch for a certificate or the other way round. Which method is asked depends on the version — `Property.isSignatureValid` up to 1.18.2, `ServicesKeyInfo.validateProperty` and `ServicesKeyInfo.signature` from 1.19. Note that an **unsigned** property is still rejected before Loki sees it, by `hasSignature`.
+[^3]: A server can name an API server for Loki clients to resolve profile queries against, so players are visible even when the client and the server do not share an API server. Only profile reads are affected, and only for as long as the client is on that server. Supported on every version Loki supports; on 1.7 and later it travels in the server list ping, below that on the login handshake.
+[^4]: Without this, the signature checks return true without looking, which is what lets an API server that does not sign at all work. With it, they are checked against every key the API server publishes — `signaturePublickeys` in authlib-injector metadata, or `profilePropertyKeys` and `playerCertificateKeys` from `/publickeys` — plus Mojang's own key, which authlib bundles up to 1.19.4. Property keys and certificate keys are kept apart: one cannot vouch for the other.
 [^2]: This option is **NOT** necessary to ensure the integrity of chat reports made to the API server from clients, and will kick [fallback API server](https://github.com/unmojang/drasl/blob/master/doc/configuration.md) players.

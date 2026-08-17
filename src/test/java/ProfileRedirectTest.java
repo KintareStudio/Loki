@@ -589,13 +589,13 @@ public class ProfileRedirectTest {
         check("leaving puts the client back on the setting it chose",
                 org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, nonsense), null);
 
-        // A server can only ever make a client stricter, and only a client can refuse that
-        System.setProperty("Loki.ignore_declared_secure_profile", "true");
+        // The one flag answers all three questions. Saying false is a client saying it does not
+        // want this, which a server does not get to overrule any more than it can overrule a yes.
+        System.setProperty("Loki.enforce_secure_profile", "false");
         join("127.0.0.1", enforcing.port());
         ProfileRedirect.awaitDiscovery(8000L);
-        check("a client that would rather decide for itself is not made to check",
+        check("a client that said no is not made to check by a server that says yes",
                 org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, nonsense), null);
-        System.clearProperty("Loki.ignore_declared_secure_profile");
         System.setProperty("Loki.enforce_secure_profile", "true");
         check("and a client that always checks keeps checking, whatever a server says",
                 !org.unmojang.loki.hooks.ProfileKeys.isSignatureValid("x", someValue, nonsense), null);

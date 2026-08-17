@@ -55,17 +55,6 @@ Loki supports JVM arguments to enable or disable some behaviour.
   -DLoki.disable_profile_advertise=true
   ```
 
-- Turn off the pre-1.7 announcement, which carries the same declaration on the game connection
-  because those versions have no status response to put it in [^3]
-  ```
-  -DLoki.disable_legacy_announce=true
-  ```
-
-- Keep the marker off the handshake on 1.3 to 1.6.4, where it rides on the end of the host. Only a
-  proxy reads that field; a server of those versions drops it [^3]
-  ```
-  -DLoki.no_legacy_handshake_marker=true
-  ```
 
 - Re-enable patchy (server blocking)
   ```
@@ -84,10 +73,12 @@ Loki supports JVM arguments to enable or disable some behaviour.
   On a server this flag does one more thing: it tells the Loki clients that join that signatures are
   checked here, so they check too for as long as they are on it. [^3]
 
-- Ignore a server asking for signatures to be verified on it, and check only where you said so [^3]
+- Refuse it instead, and check nowhere, whatever a server asks for [^3]
   ```
-  -DLoki.ignore_declared_secure_profile=true
+  -DLoki.enforce_secure_profile=false
   ```
+  Set either way, the flag is your answer and a server cannot change it. Left unset, a server that
+  says it checks signatures is taken at its word for as long as you are on it.
 
 - Force the applet launcher to re-download the game, for pre-Beta 1.3 applet launchers that lack a "Force Update" option
   ```

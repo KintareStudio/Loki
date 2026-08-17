@@ -345,13 +345,15 @@ public final class ProfileKeys {
      * as long as the player is on it. Baking the answer into the bytecode, as this used to, meant a
      * client that started without the flag could never begin checking, whatever a server asked for.
      * <p>
-     * A server can only make a client stricter this way, never laxer. A client that has the flag on
-     * keeps checking everywhere, and one that would rather decide for itself sets
-     * {@code Loki.ignore_declared_secure_profile}.
+     * A server is only asked when the client has not already said. Setting the flag either way is
+     * the client saying so, and a server does not get to argue with it in either direction.
      */
     public static boolean enforcing() {
-        if (Boolean.getBoolean("Loki.enforce_secure_profile")) return true;
-        if (Boolean.getBoolean("Loki.ignore_declared_secure_profile")) return false;
+        // Three answers out of one flag, because there are three things an operator can mean.
+        // Setting it says check everywhere; setting it to false says do not, whatever a server
+        // asks for; and leaving it alone says take the server's word for it.
+        String chosen = System.getProperty("Loki.enforce_secure_profile");
+        if (chosen != null) return Boolean.parseBoolean(chosen);
         return Boolean.getBoolean(ProfileRedirect.PROP_ENFORCE);
     }
 

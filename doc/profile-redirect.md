@@ -233,11 +233,8 @@ already knows about. Loki works out which it is without being told: only a proxy
 and connecting onward at the same moment. A player who opens a world to the LAN is serving someone
 too, and is back to hearing servers normally the moment they are not.
 
-If you would rather the marker never left your client at all:
-
-```
--DLoki.no_legacy_handshake_marker=true
-```
+A client that would rather send nothing at all turns the whole feature off with
+`-DLoki.disable_profile_redirect=true`, which stops it asking as well as stops it listening.
 
 Classic is the one era that never asks a socket for its streams — both ends of it are non-blocking
 NIO — so it is hooked on the channel instead. Its Player Identification is 131 bytes and the last of
@@ -254,11 +251,9 @@ Leaving restores, the same as on 1.7 and up. Nothing down here tells the game a 
 end of the connection stands in for it — the stream ending, the stream closing, or the socket being
 closed, which from 1.3 is the usual one.
 
-```
--DLoki.disable_legacy_announce=true
-```
-
-turns the whole pre-1.7 path off, in both directions.
+There is no switch of its own for any of this. It is the same feature as the ping, so it answers to
+the same two: `-DLoki.disable_profile_advertise=true` stops a server declaring on every version, and
+`-DLoki.disable_profile_redirect=true` stops a client asking or listening on every version.
 
 ## What is redirected
 
@@ -309,8 +304,8 @@ on if it was launched with `Loki.enforce_secure_profile`, off otherwise.
 
 The asymmetry is the point. A server can make a client stricter about the server's own players and
 nothing else, which is a thing it can already do by refusing to let them in. It cannot make a client
-laxer, and it cannot reach past the visit. A client that would rather not be asked at all sets
-`Loki.ignore_declared_secure_profile=true` and decides for itself everywhere.
+laxer, and it cannot reach past the visit. A client that would rather not be asked sets `Loki.enforce_secure_profile` itself — either way, and
+a server cannot argue with an answer already given.
 
 Worth knowing what "stricter" costs: on a server whose API server publishes no usable keys, checking
 turns every player into Steve where accepting would have shown them. That is the server operator's
@@ -376,5 +371,6 @@ turns out to be shaped differently than the table says.
 -DLoki.disable_profile_redirect=true
 ```
 
-Server declarations are then ignored entirely, and the Netty hook is not installed at all. Below 1.7
-the connection path is separate, and `-DLoki.disable_legacy_announce=true` turns that one off.
+Server declarations are then ignored entirely, the Netty hook is not installed, and below 1.7 the
+client neither marks itself nor reads a block. The server's half answers to
+`-DLoki.disable_profile_advertise=true`, on every version alike.

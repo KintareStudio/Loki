@@ -21,8 +21,27 @@ public final class LegacyAnnounce {
 
     private LegacyAnnounce() {}
 
+    // The same two switches as on 1.7 and up, because this is the same feature and an operator
+    // should not have to know which era a player is on to turn it off. A server that is not
+    // advertising has nothing to send here either, and a client that is ignoring declarations has
+    // no reason to read one.
+    private static boolean notDeclaring() {
+        return Boolean.getBoolean("Loki.disable_profile_advertise");
+    }
+
+    private static boolean notListening() {
+        return Boolean.getBoolean("Loki.disable_profile_redirect");
+    }
+
     private static boolean disabled() {
-        return Boolean.getBoolean("Loki.disable_legacy_announce");
+        return notDeclaring() && notListening();
+    }
+
+    // A channel serves one role at a time, so which switch applies to it is not a fixed answer:
+    // on a proxy the same process is a server on the connections it accepts and a client on the
+    // ones it makes.
+    private static boolean silentOn(org.unmojang.loki.util.ClassicChannels.Conn conn) {
+        return conn.server ? notDeclaring() : notListening();
     }
 
     public static Object accepted(Object socket) {
@@ -73,12 +92,15 @@ public final class LegacyAnnounce {
     }
 
     public static InputStream wrapInput(InputStream in, final java.net.Socket socket) {
-        if (in == null || disabled()) return in;
+        if (in == null) return in;
         try {
             if (isServer(socket)) {
+                if (notDeclaring()) return in; // nothing to look for a marker on behalf of
                 return LegacyStreams.watchModernHandshake(
                         LegacyStreams.watchBetaLogin(in, markOf(socket)), markOf(socket));
             }
+            if (notListening()) return in; // a client that ignores declarations reads no blocks
+
             final boolean[] declared = new boolean[1];
             LegacyStreams.Sink sink = new LegacyStreams.Sink() {
                 public void declared(String declaration) {
@@ -162,9 +184,11 @@ public final class LegacyAnnounce {
     }
 
     public static void beforeChannelWrite(final Object channel, java.nio.ByteBuffer src) {
-        if (channel == null || src == null || disabled()) return;
+        if (channel == null || src == null) return;
+        org.unmojang.loki.util.ClassicChannels.Conn conn = connOf(channel);
+        if (silentOn(conn)) return;
         try {
-            org.unmojang.loki.util.ClassicChannels.beforeWrite(connOf(channel), src,
+            org.unmojang.loki.util.ClassicChannels.beforeWrite(conn, src,
                     new org.unmojang.loki.util.ClassicChannels.Writer() {
                         public String declaration() {
                             return LegacyAnnounce.declaration();
@@ -184,9 +208,11 @@ public final class LegacyAnnounce {
     }
 
     public static int afterChannelWrite(int written, Object channel, java.nio.ByteBuffer src) {
-        if (channel == null || src == null || disabled()) return written;
+        if (channel == null || src == null) return written;
+        org.unmojang.loki.util.ClassicChannels.Conn conn = connOf(channel);
+        if (silentOn(conn)) return written;
         try {
-            return org.unmojang.loki.util.ClassicChannels.afterWrite(connOf(channel), src, written);
+            return org.unmojang.loki.util.ClassicChannels.afterWrite(conn, src, written);
         } catch (Throwable t) {
             log.debug("Not accounting for this channel's writes (" + t + ")");
             return written;
@@ -194,9 +220,10 @@ public final class LegacyAnnounce {
     }
 
     public static int afterChannelRead(int read, Object channel, java.nio.ByteBuffer dst) {
-        if (channel == null || dst == null || disabled()) return read;
+        if (channel == null || dst == null) return read;
+        org.unmojang.loki.util.ClassicChannels.Conn conn = connOf(channel);
+        if (silentOn(conn)) return read;
         try {
-            org.unmojang.loki.util.ClassicChannels.Conn conn = connOf(channel);
             int given = org.unmojang.loki.util.ClassicChannels.afterRead(conn, dst, read);
             if (conn.declaration != null) {
                 String declaration = conn.declaration;
@@ -280,10 +307,10 @@ public final class LegacyAnnounce {
     }
 
     public static OutputStream wrapOutput(OutputStream out, java.net.Socket socket) {
-        if (out == null || disabled()) return out;
+        if (out == null) return out;
         try {
             if (isServer(socket)) {
-                if (declaration() == null) return out;
+                if (notDeclaring() || declaration() == null) return out;
                 LegacyStreams.Source source = new LegacyStreams.Source() {
                     public String declaration() {
                         return LegacyAnnounce.declaration();
@@ -297,9 +324,7 @@ public final class LegacyAnnounce {
                 return LegacyStreams.appendAfter(appended, LegacyStreams.afterHandshake(),
                         LegacyProtocol.HANDSHAKE, source, markOf(socket), LegacyProtocol.RAW);
             }
-            if (Boolean.getBoolean("Loki.no_legacy_handshake_marker")) {
-                return LegacyStreams.markBetaLogin(out);
-            }
+            if (notListening()) return out; // no point asking for what would be ignored
             return LegacyStreams.markModernHandshake(LegacyStreams.markBetaLogin(out));
         } catch (Throwable t) {
             log.debug("Not filtering this socket's output (" + t + ")");

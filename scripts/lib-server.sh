@@ -70,6 +70,17 @@ loki_fetch_version() {
 loki_jdk() {
     major=$1
     loki_java_home=$(eval "echo \${LOKI_JDK$major:-}")
+
+    # 1.17 asks for 16, which few people have; a later JDK runs it. Only upwards from 16, because a
+    # version that asks for 8 means it, and those do not start on anything newer.
+    if [ -z "$loki_java_home" ] && [ "$major" -ge 16 ]; then
+        for newer in 17 21 25; do
+            [ "$newer" -gt "$major" ] || continue
+            loki_java_home=$(eval "echo \${LOKI_JDK$newer:-}")
+            [ -n "$loki_java_home" ] && { major=$newer; break; }
+        done
+    fi
+
     if [ -z "$loki_java_home" ]; then
         echo "  needs Java $major; set LOKI_JDK$major to a JDK $major" >&2
         return 3
@@ -77,16 +88,32 @@ loki_jdk() {
     loki_java_bin="$loki_java_home/bin/java"
 }
 
-# Servers Mojang no longer publishes. Its manifest carries client jars for these versions and no
-# server, so the originals come from betacraft.uk, which archives them unmodified.
+# Whether this version predates the status response, which is what decides which test applies to it.
+# Asked of the version rather than of where its jar comes from: Mojang still publishes the servers
+# from 1.2.5 on, and those are pre-1.7 all the same.
+loki_is_legacy() {
+    case $1 in
+        c*|a*|b*|1.0|1.0.*|1.[1-6]|1.[1-6].*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Servers Mojang no longer publishes, from betacraft.uk, which archives them unmodified.
 #
-# The ids are the server's own, which are not the client's: the Alpha client a1.2.6 was served by
-# a0.2.8, and Classic clients by the c1.x line. That is why this is a table and not a rule.
+# Beta is filed under the client's own id, so that needs no table: b1.7.3 is served by b1.7.3.
+# Written out below are the ones where the id does not carry over — Alpha, whose numbering does not
+# line up with the client's at all, Classic, and 1.0, whose jar is called 1.0.0.
 loki_legacy_server_url() {
     case $1 in
-        1.2.1)  echo "https://files.betacraft.uk/server-archive/release/1.2/1.2.1.jar" ;;
-        1.1)    echo "https://files.betacraft.uk/server-archive/release/1.1/1.1.jar" ;;
-        1.0)    echo "https://files.betacraft.uk/server-archive/release/1.0/1.0.0.jar" ;;
+        1.0)    echo "https://files.betacraft.uk/server-archive/release/1.0/1.0.0.jar"; return ;;
+        b*)     echo "https://files.betacraft.uk/server-archive/beta/$1.jar"; return ;;
+        1.1)    echo "https://files.betacraft.uk/server-archive/release/1.1/1.1.jar"; return ;;
+        # 1.2.5 is the oldest server Mojang still publishes, so from there the manifest is the
+        # better source: it is the original, and it is the one an operator would have.
+        1.2.[1-4])
+                echo "https://files.betacraft.uk/server-archive/release/1.2/$1.jar"; return ;;
+    esac
+    case $1 in
         b1.8.1) echo "https://files.betacraft.uk/server-archive/beta/b1.8.1.jar" ;;
         b1.6.6) echo "https://files.betacraft.uk/server-archive/beta/b1.6.6.jar" ;;
         b1.5_01) echo "https://files.betacraft.uk/server-archive/beta/b1.5_01.jar" ;;
@@ -150,7 +177,7 @@ loki_write_server_dir() {
     # A server of the Beta era reads a handful of keys and refuses the modern ones outright: it
     # rejects view-distance=2 with "Too small view radius!" and never finishes starting. Give those
     # only what they understood.
-    if [ -n "$(loki_legacy_server_url "$version")" ]; then
+    if loki_is_legacy "$version"; then
         cat > "$work/server.properties" <<EOF
 server-port=$port
 online-mode=false
@@ -165,8 +192,8 @@ EOF
 server-port=$port
 online-mode=false
 max-players=4
-view-distance=2
-simulation-distance=2
+view-distance=3
+simulation-distance=3
 level-type=flat
 spawn-protection=0
 sync-chunk-writes=false

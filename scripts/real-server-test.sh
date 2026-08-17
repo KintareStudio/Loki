@@ -65,7 +65,7 @@ classpath="$(topath "$loki_agent_jar")$cp_sep$(topath "$work/pinger")"
 # 1.7 and up only, which is where a status response exists to put a declaration in. Below that the
 # declaration travels on the game connection instead, and legacy-matrix.sh is what tests it — with
 # a real client on the other end, which is the only way to know it arrived.
-if [ -n "$(loki_legacy_server_url "$version")" ]; then
+if loki_is_legacy "$version"; then
     echo "  $version has no status response to declare in; use scripts/legacy-matrix.sh" >&2
     exit 3
 fi

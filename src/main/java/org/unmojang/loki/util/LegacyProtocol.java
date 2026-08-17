@@ -115,6 +115,9 @@ public final class LegacyProtocol {
 
     /** What the client of that range puts in the field, and the only thing this will replace. */
     public static final String PASSWORD = "Password";
+    private static final byte[] PASSWORD_BYTES = {'P', 'a', 's', 's', 'w', 'o', 'r', 'd'};
+    /** What a client writes where its seed would go, having none. */
+    private static final byte[] EMPTY_SEED = new byte[8];
 
     /** What replaces it. Printable throughout, since it travels as a string rather than a seed. */
     public static final byte[] PASSWORD_MARKER = {'L', 'o', 'k', 'i', '0', '0', '0', '1'};
@@ -414,21 +417,30 @@ public final class LegacyProtocol {
 
         /** What has to be at this position for the eight bytes to be the ones this may replace. */
         public byte expectedAt(int index) {
-            return strings == STRINGS_PASSWORD ? (byte) PASSWORD.charAt(index) : 0;
+            return before()[index];
         }
 
         /** What goes there instead. */
         public byte markerAt(int index) {
-            return strings == STRINGS_PASSWORD ? PASSWORD_MARKER[index] : LOGIN_MARKER[index];
+            return after()[index];
         }
 
         /** Whether the eight bytes just read are a marker rather than what was there before. */
         public boolean isMarker(byte[] eight) {
-            byte[] wanted = strings == STRINGS_PASSWORD ? PASSWORD_MARKER : LOGIN_MARKER;
+            byte[] wanted = after();
             for (int i = 0; i < wanted.length; i++) {
                 if (eight[i] != wanted[i]) return false;
             }
             return true;
+        }
+
+        /** A seed a client has no value for, or the letters of the password that stands in for it. */
+        private byte[] before() {
+            return strings == STRINGS_PASSWORD ? PASSWORD_BYTES : EMPTY_SEED;
+        }
+
+        private byte[] after() {
+            return strings == STRINGS_PASSWORD ? PASSWORD_MARKER : LOGIN_MARKER;
         }
 
         /** Whether this has given up, or has already seen all eight. */
@@ -534,6 +546,19 @@ public final class LegacyProtocol {
     /** The channel the declaration travels on, chosen to be nobody else's. */
     public static final String CHANNEL = "Loki";
 
+    /**
+     * Which framing starts with this byte, or null for anything that is not one of ours.
+     * <p>
+     * The two were given first bytes that no server of their era sends, and different ones from
+     * each other, so a reader that has only seen one byte already knows which of the three cases it
+     * is in.
+     */
+    public static Block blockStartingWith(byte first) {
+        if (first == RAW.firstByte()) return RAW;
+        if (first == PLUGIN_MESSAGE.firstByte()) return PLUGIN_MESSAGE;
+        return null;
+    }
+
     /** Raw bytes, for the eras where nothing sits between the two ends of a connection. */
     public static final Block RAW = new Block() {
         public byte firstByte() {
@@ -632,36 +657,5 @@ public final class LegacyProtocol {
         block[PAYLOAD_MAGIC.length + 1] = (byte) body.length;
         System.arraycopy(body, 0, block, PAYLOAD_HEADER_BYTES, body.length);
         return block;
-    }
-
-    /**
-     * Reads back what {@link #payload} wrote.
-     *
-     * @return the declaration, or null when the block is incomplete or malformed. A caller that
-     *         gets null must pass the bytes on untouched rather than swallow them.
-     */
-    public static String declarationOf(byte[] bytes, int at, int available) {
-        if (!startsWithMagic(bytes, at, available)) return null;
-        if (available < PAYLOAD_HEADER_BYTES) return null;
-
-        int length = ((bytes[at + PAYLOAD_MAGIC.length] & 0xFF) << 8)
-                | (bytes[at + PAYLOAD_MAGIC.length + 1] & 0xFF);
-        if (length <= 0 || length > PAYLOAD_MAX_BYTES) return null;
-        if (available < PAYLOAD_HEADER_BYTES + length) return null;
-
-        try {
-            return new String(bytes, at + PAYLOAD_HEADER_BYTES, length, "UTF-8");
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /** How many bytes the whole block occupies, so a reader knows what to skip. */
-    public static int payloadLength(byte[] bytes, int at, int available) {
-        if (!startsWithMagic(bytes, at, available) || available < PAYLOAD_HEADER_BYTES) return -1;
-        int length = ((bytes[at + PAYLOAD_MAGIC.length] & 0xFF) << 8)
-                | (bytes[at + PAYLOAD_MAGIC.length + 1] & 0xFF);
-        if (length <= 0 || length > PAYLOAD_MAX_BYTES) return -1;
-        return available < PAYLOAD_HEADER_BYTES + length ? -1 : PAYLOAD_HEADER_BYTES + length;
     }
 }

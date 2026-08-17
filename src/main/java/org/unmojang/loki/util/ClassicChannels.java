@@ -289,33 +289,38 @@ public final class ClassicChannels {
         conn.heldLength = 0;
 
         int at = 0;
-        if (!conn.decided) {
-            boolean couldBeOurs = total < LegacyProtocol.PAYLOAD_MAGIC.length
-                    ? all[0] == LegacyProtocol.PAYLOAD_MAGIC[0]
-                    : LegacyProtocol.startsWithMagic(all, 0, total);
-            if (!couldBeOurs) {
-                conn.decided = true; // a server that sent nothing, which is most of them
-            } else {
-                int length = LegacyProtocol.payloadLength(all, 0, total);
-                if (length < 0) {
-                    // Not all of it yet, and none of it may reach the game: the first byte is the
-                    // start of something the game has never heard of.
-                    if (total > LegacyProtocol.PAYLOAD_HEADER_BYTES + LegacyProtocol.PAYLOAD_MAX_BYTES) {
-                        conn.decided = true; // longer than any block can be, so it was never one
-                    } else {
-                        hold(conn, all, 0, total);
-                        dst.position(from);
-                        return 0;
-                    }
+        LegacyProtocol.Block framing = conn.decided ? null : LegacyProtocol.blockStartingWith(all[0]);
+        if (!conn.decided && framing == null) {
+            conn.decided = true; // a server that sent nothing, which is most of them
+        } else if (framing != null) {
+            int body = total < framing.headerBytes() ? -1 : framing.bodyLength(all, total);
+            if (body < 0 || total < framing.headerBytes() + body) {
+                // Not all of it yet, and none of it may reach the game: the first byte is the start
+                // of something the game has never heard of.
+                if (total > framing.headerBytes() + LegacyProtocol.PAYLOAD_MAX_BYTES) {
+                    conn.decided = true; // longer than any block can be, so it was never one
                 } else {
-                    conn.declaration = LegacyProtocol.declarationOf(all, 0, total);
-                    conn.declaredHere = conn.declaration != null;
-                    conn.decided = true;
-                    at = length;
+                    hold(conn, all, 0, total);
+                    dst.position(from);
+                    return 0;
                 }
+            } else {
+                conn.declaration = text(all, framing.headerBytes(), body);
+                conn.declaredHere = conn.declaration != null;
+                conn.decided = true;
+                at = framing.headerBytes() + body;
             }
         }
         return deliver(conn, dst, from, all, at, total - at);
+    }
+
+    /** The declaration out of a block's body, which is UTF-8 in both framings. */
+    private static String text(byte[] bytes, int at, int length) {
+        try {
+            return new String(bytes, at, length, "UTF-8");
+        } catch (Exception e) {
+            return null; // no UTF-8 in this JVM, which cannot happen, but not worth a crash
+        }
     }
 
     /** Keeps bytes back for the next read, since a channel cannot be given them again. */

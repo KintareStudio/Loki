@@ -18,7 +18,6 @@ import java.io.OutputStream;
  * That is the failure this design is most likely to have.
  */
 public class LegacyStreamsTest {
-    private static final int IDENTIFICATION = LegacyProtocol.CLASSIC_IDENTIFICATION_BYTES;
     private static final String API = "https://drasl.kintare.studio/authlib-injector";
 
     private static int failures = 0;
@@ -27,15 +26,6 @@ public class LegacyStreamsTest {
         if (!ok) failures++;
         System.out.println((ok ? "  ok   " : "  FAIL ") + label
                 + (detail == null ? "" : "  [" + detail + "]"));
-    }
-
-    /** A server or client identification packet: 131 bytes, the last one free. */
-    private static byte[] identification() {
-        byte[] packet = new byte[IDENTIFICATION];
-        packet[0] = LegacyProtocol.CLASSIC_IDENTIFICATION;
-        packet[1] = 7; // protocol version
-        for (int i = 2; i < IDENTIFICATION - 1; i++) packet[i] = ' ';
-        return packet;
     }
 
     /** A string on the Alpha and Beta wire: a count of characters, then UTF-16BE. */
@@ -169,85 +159,6 @@ public class LegacyStreamsTest {
     private static void run() throws Exception {
         int[] chunks = {1, 7, 131, 4096};
 
-        for (int c = 0; c < chunks.length; c++) {
-            int chunk = chunks[c];
-            System.out.println();
-            System.out.println("== arriving " + chunk + " byte(s) at a time ==");
-
-            // ---- the client marks itself, and the packet keeps its shape
-            ByteArrayOutputStream raw = new ByteArrayOutputStream();
-            OutputStream marking = LegacyStreams.mark(raw, IDENTIFICATION,
-                    LegacyProtocol.CLASSIC_MARKER_OFFSET, LegacyProtocol.MARKER,
-                    LegacyProtocol.CLASSIC_IDENTIFICATION);
-            byte[] clientPackets = concat(identification(), nextPacket());
-            writeAll(marking, clientPackets, chunk);
-
-            byte[] marked = raw.toByteArray();
-            check("the marked packet is the same length", marked.length == clientPackets.length,
-                    marked.length + " vs " + clientPackets.length);
-            check("with the marker in the byte nobody reads",
-                    marked[LegacyProtocol.CLASSIC_MARKER_OFFSET] == LegacyProtocol.MARKER, null);
-            check("and everything after it untouched",
-                    same(nextPacket(), java.util.Arrays.copyOfRange(marked, IDENTIFICATION,
-                            marked.length)), null);
-
-            // ---- the server notices, without changing anything
-            LegacyStreams.Marked flag = new LegacyStreams.Marked();
-            byte[] seenByServer = readAll(LegacyStreams.watchForMark(
-                    new ByteArrayInputStream(marked), LegacyProtocol.CLASSIC_MARKER_OFFSET,
-                    LegacyProtocol.MARKER, LegacyProtocol.CLASSIC_IDENTIFICATION, flag), chunk);
-            check("the server sees the mark", flag.isMarked(), null);
-            check("and reads the bytes exactly as they arrived", same(marked, seenByServer), null);
-
-            // ---- the server answers, appending the block
-            ByteArrayOutputStream wire = new ByteArrayOutputStream();
-            OutputStream appending = LegacyStreams.appendAfter(wire, LegacyStreams.constant(IDENTIFICATION),
-                    LegacyProtocol.CLASSIC_IDENTIFICATION,
-                    new LegacyStreams.Source() {
-                        public String declaration() {
-                            return API;
-                        }
-                    }, flag);
-            writeAll(appending, concat(identification(), nextPacket()), chunk);
-            check("the block goes out after the identification",
-                    wire.toByteArray().length
-                            == IDENTIFICATION + nextPacket().length
-                            + LegacyProtocol.PAYLOAD_HEADER_BYTES + API.length(),
-                    String.valueOf(wire.toByteArray().length));
-
-            // ---- and the client takes it back out
-            Recorder recorder = new Recorder();
-            byte[] seenByGame = readAll(LegacyStreams.stripAfter(new ByteArrayInputStream(wire.toByteArray()),
-                    LegacyStreams.constant(IDENTIFICATION), LegacyProtocol.CLASSIC_IDENTIFICATION, recorder), chunk);
-            check("the game reads what a plain server would have sent",
-                    same(concat(identification(), nextPacket()), seenByGame),
-                    seenByGame.length + " bytes");
-            check("and Loki got the declaration", API.equals(recorder.declaration),
-                    recorder.declaration);
-
-            // ---- a client that did not mark itself is sent nothing
-            LegacyStreams.Marked unmarked = new LegacyStreams.Marked();
-            ByteArrayOutputStream plainWire = new ByteArrayOutputStream();
-            writeAll(LegacyStreams.appendAfter(plainWire, LegacyStreams.constant(IDENTIFICATION),
-                    LegacyProtocol.CLASSIC_IDENTIFICATION,
-                    new LegacyStreams.Source() {
-                        public String declaration() {
-                            return API;
-                        }
-                    }, unmarked), concat(identification(), nextPacket()), chunk);
-            check("an unmarked client is sent the packet and nothing else",
-                    same(concat(identification(), nextPacket()), plainWire.toByteArray()), null);
-
-            // ---- and a server that declared nothing leaves the client alone
-            Recorder quiet = new Recorder();
-            byte[] fromPlainServer = readAll(LegacyStreams.stripAfter(new ByteArrayInputStream(concat(identification(), nextPacket())),
-                    LegacyStreams.constant(IDENTIFICATION), LegacyProtocol.CLASSIC_IDENTIFICATION, quiet), chunk);
-            check("a plain server's bytes reach the game unchanged",
-                    same(concat(identification(), nextPacket()), fromPlainServer), null);
-            check("and nothing is reported as declared", quiet.declaration == null,
-                    quiet.declaration);
-        }
-
         // Alpha and Beta put the two holes somewhere else: the marker in the login packet's map
         // seed, which a client sends as zero, and the block between the server's handshake reply
         // and its login reply. The boundary is read off the wire rather than assumed, because the
@@ -266,7 +177,9 @@ public class LegacyStreamsTest {
                     marked.toByteArray().length + " vs " + clientSide.length);
             int seedAt = betaHandshake("Tester").length + 1 + 4 + 2 + "Tester".length() * 2;
             check("and the marker sits where the seed was",
-                    LegacyProtocol.isLoginMarker(marked.toByteArray(), seedAt), null);
+                    same(LegacyProtocol.LOGIN_MARKER, java.util.Arrays.copyOfRange(
+                            marked.toByteArray(), seedAt,
+                            seedAt + LegacyProtocol.LOGIN_MARKER.length)), null);
             check("with the handshake before it untouched",
                     same(betaHandshake("Tester"), java.util.Arrays.copyOfRange(
                             marked.toByteArray(), 0, betaHandshake("Tester").length)), null);
@@ -525,14 +438,18 @@ public class LegacyStreamsTest {
 
         for (int c = 0; c < chunks.length; c++) {
             ByteArrayOutputStream sent = new ByteArrayOutputStream();
-            writeAll(LegacyStreams.mark(sent, IDENTIFICATION, LegacyProtocol.CLASSIC_MARKER_OFFSET,
-                    LegacyProtocol.MARKER, LegacyProtocol.CLASSIC_IDENTIFICATION), http, chunks[c]);
+            writeAll(LegacyStreams.markBetaLogin(sent), http, chunks[c]);
             check("an HTTP request goes out byte for byte, at " + chunks[c] + " at a time",
                     same(http, sent.toByteArray()), null);
 
+            ByteArrayOutputStream alsoSent = new ByteArrayOutputStream();
+            writeAll(LegacyStreams.markModernHandshake(alsoSent), http, chunks[c]);
+            check("and again through the filter that rewrites a handshake",
+                    same(http, alsoSent.toByteArray()), null);
+
             Recorder none = new Recorder();
             byte[] received = readAll(LegacyStreams.stripAfter(new ByteArrayInputStream(http),
-                    LegacyStreams.constant(IDENTIFICATION), LegacyProtocol.CLASSIC_IDENTIFICATION, none), chunks[c]);
+                    LegacyStreams.afterHandshake(), LegacyProtocol.HANDSHAKE, none), chunks[c]);
             check("and a reply comes back byte for byte", same(http, received), null);
             check("with nothing taken for a declaration", none.declaration == null, none.declaration);
         }

@@ -98,11 +98,6 @@ public final class LegacyProtocol {
         return head[3] == 0;
     }
 
-    /** The protocol version, which is the first field of the login packet and says its shape. */
-    public static int protocolOf(byte[] login) {
-        return ((login[1] & 0xFF) << 24) | ((login[2] & 0xFF) << 16)
-                | ((login[3] & 0xFF) << 8) | (login[4] & 0xFF);
-    }
 
     // ------------------------------------------------- which shape a login packet has
 
@@ -417,13 +412,6 @@ public final class LegacyProtocol {
     /** The eight bytes written there, chosen so that a zero seed cannot be mistaken for it. */
     public static final byte[] LOGIN_MARKER = {'L', 'o', 'k', 'i', 0x00, 0x01, 0x00, 0x00};
 
-    /** Whether these bytes, at this offset, are the marker rather than a seed. */
-    public static boolean isLoginMarker(byte[] bytes, int at) {
-        for (int i = 0; i < LOGIN_MARKER.length; i++) {
-            if (bytes[at + i] != LOGIN_MARKER[i]) return false;
-        }
-        return true;
-    }
 
     private LegacyProtocol() {}
 

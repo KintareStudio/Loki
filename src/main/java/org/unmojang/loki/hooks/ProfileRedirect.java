@@ -1,5 +1,6 @@
 package org.unmojang.loki.hooks;
 
+import org.unmojang.loki.RequestInterceptor;
 import org.unmojang.loki.util.HttpUtil;
 import org.unmojang.loki.util.Json;
 import org.unmojang.loki.util.ServerListPing;
@@ -396,10 +397,18 @@ public final class ProfileRedirect {
             return;
         }
 
-        // Only what was declared. An endpoint left unnamed keeps going where it was already going.
-        setOrClear(PROP_SESSION, discovery.session);
-        setOrClear(PROP_ACCOUNT, discovery.account);
-        setOrClear(PROP_SERVICES, discovery.services);
+        // Only what was declared, and only what actually moves. Most servers a player joins are on
+        // the same API server they are, and naming it is not a redirect: rewriting a URL to the
+        // address it already had costs a parse and a rebuilt connection per profile query, and
+        // turns a log into a stream of redirections that go nowhere.
+        String session = unlessAlreadyThere(discovery.session, "sessionserver.mojang.com");
+        String account = unlessAlreadyThere(discovery.account, "api.mojang.com");
+        String services = unlessAlreadyThere(discovery.services, "api.minecraftservices.com");
+        boolean moves = session != null || account != null || services != null;
+
+        setOrClear(PROP_SESSION, session);
+        setOrClear(PROP_ACCOUNT, account);
+        setOrClear(PROP_SERVICES, services);
         // Stricter only, and only here: a server can ask for signatures to be checked on it, and
         // leaving puts the client back on whatever it decided for itself
         setOrClear(PROP_ENFORCE, discovery.enforce ? "true" : null);
@@ -408,8 +417,34 @@ public final class ProfileRedirect {
         // Its keys as well as its profiles. What it serves is signed by them, so checking against
         // the configured server's alone would reject every profile it answers with. Only recorded
         // here, never fetched: this can run on the connection's own thread.
-        ProfileKeys.useDeclared(discovery.services, discovery.root);
-        log.info("Profiles will be answered by " + discovery.session + " while on " + peer);
+        ProfileKeys.useDeclared(services, services == null ? null : discovery.root);
+
+        if (moves) {
+            log.info("Profiles will be answered by " + discovery.session + " while on " + peer);
+        } else {
+            log.info(peer + " is on the same API server as this client, so profile queries stay"
+                    + " where they were");
+        }
+    }
+
+    /**
+     * A declared endpoint, or null when it names where that query already goes.
+     *
+     * @param declared   what the server named, or null if it named nothing
+     * @param mojangHost the host this endpoint stands in for, as {@link #baseFor} keys them
+     */
+    private static String unlessAlreadyThere(String declared, String mojangHost) {
+        if (declared == null) return null;
+        String configured = RequestInterceptor.YGGDRASIL_MAP.get(mojangHost);
+        return withoutTrailingSlash(declared).equalsIgnoreCase(withoutTrailingSlash(configured))
+                ? null : declared;
+    }
+
+    private static String withoutTrailingSlash(String url) {
+        if (url == null) return "";
+        int end = url.length();
+        while (end > 0 && url.charAt(end - 1) == '/') end--;
+        return url.substring(0, end);
     }
 
     private static void setOrClear(String property, String value) {

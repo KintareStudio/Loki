@@ -165,7 +165,7 @@ public final class ProfileRedirect {
 
         System.clearProperty(PROP_PEER);
         clearActiveOverride();
-        log.debug("Left " + peer + ", back to the configured profile API");
+        log.info("Left " + peer + ", back to the configured profile API");
     }
 
     /**

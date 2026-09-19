@@ -61,7 +61,8 @@ public class RequestInterceptor {
                 "api.ashcon.app",
                 "mineskin.eu",
                 "minotar.net",
-                "skinsystem.ely.by"
+                "skinsystem.ely.by",
+                "raw.githubusercontent.com"
         ));
         if (!Loki.enable_snooper) {
             INTERCEPTED_DOMAINS.add("snoop.minecraft.net");
@@ -176,7 +177,9 @@ public class RequestInterceptor {
             }
 
             // Textures
-            if (path.startsWith("/MinecraftSkins") || path.startsWith("/skin")) {
+            if (path.startsWith("/MinecraftSkins") || path.startsWith("/skin")
+                    || (host.equals("raw.githubusercontent.com")
+                    && path.startsWith("/exalpha-dev/exalpha-dev.github.io/main/skincache/"))) {
                 String username = Ygglib.getUsernameFromPath(path);
                 Loki.log.info("Intercepting skin lookup for " + username);
                 return Ygglib.getTexture(originalUrl, originalConn, username, "SKIN");

@@ -177,13 +177,13 @@ public class RequestInterceptor {
             }
 
             // Textures
-            if (path.startsWith("/MinecraftSkins") || path.startsWith("/skin")
+            if (path.startsWith("/MinecraftSkins/") || path.startsWith("/skin/")
                     || (host.equals("raw.githubusercontent.com")
                     && path.startsWith("/exalpha-dev/exalpha-dev.github.io/main/skincache/"))) {
                 String username = Ygglib.getUsernameFromPath(path);
                 Loki.log.info("Intercepting skin lookup for " + username);
                 return Ygglib.getTexture(originalUrl, originalConn, username, "SKIN");
-            } else if (path.startsWith("/MinecraftCloaks")) {
+            } else if (path.startsWith("/MinecraftCloaks/")) {
                 String username = Ygglib.getUsernameFromPath(path);
                 Loki.log.info("Intercepting cape lookup for " + username);
                 return Ygglib.getTexture(originalUrl, originalConn, username, "CAPE");
@@ -333,7 +333,7 @@ public class RequestInterceptor {
                 return Ygglib.getAshcon(originalUrl, originalConn, username);
             }
 
-            if (host.equals("minotar.net") && (path.startsWith("/helm") || path.startsWith("/avatar"))) {
+            if (host.equals("minotar.net") && (path.startsWith("/helm/") || path.startsWith("/avatar/"))) {
                 try {
                     String[] segments = path.split("/");
                     if (segments.length < 3 || segments[2].length() == 0) return originalConn;
@@ -352,19 +352,19 @@ public class RequestInterceptor {
                 }
             }
 
-            if (host.equals("skinsystem.ely.by") && path.startsWith("/textures")) {
+            if (host.equals("skinsystem.ely.by") && path.startsWith("/textures/")) {
                 String username = Ygglib.getUsernameFromPath(path);
                 Loki.log.info("Intercepting ely.by lookup for " + username);
                 return Ygglib.getElyBy(originalUrl, originalConn, username);
             }
 
             // Capes
-            if (host.equals("s.optifine.net") && path.startsWith("/capes")) {
+            if (host.equals("s.optifine.net") && path.startsWith("/capes/")) {
                 Loki.log.info("Intercepting OptiFine cape lookup");
                 return Ygglib.FakeURLConnection(originalUrl, originalConn, 403, ("Nice try ;)").getBytes("UTF-8"));
             }
 
-            if (host.equals("161.35.130.99") && path.startsWith("/capes")) {
+            if (host.equals("161.35.130.99") && path.startsWith("/capes/")) {
                 Loki.log.info("Intercepting Cloaks+ cape lookup");
                 return Ygglib.FakeURLConnection(originalUrl, originalConn, 403, ("Nice try ;)").getBytes("UTF-8"));
             }

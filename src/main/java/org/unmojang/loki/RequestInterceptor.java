@@ -288,7 +288,9 @@ public class RequestInterceptor {
             if (host.equals("s3.amazonaws.com") && path.startsWith("/Minecraft.Resources")) resourcePrefix = "/Minecraft.Resources";
             else if (host.equals("s3.amazonaws.com") && path.startsWith("/MinecraftResources")) resourcePrefix = "/MinecraftResources";
             else if (host.equals("www.minecraft.net") && path.startsWith("/resources")) resourcePrefix = "/resources";
-            if (resourcePrefix != null) {
+            // if currentVersionId is null, we are not using one of Mojang's java launchers. Whatever launcher we're
+            // running under *should* be handling legacy resource downloads for us, so it's not an issue.
+            if (resourcePrefix != null && LauncherHooks.currentVersionId != null) {
                 try {
                     String key = path.substring(resourcePrefix.length());
                     if (key.startsWith("/")) key = key.substring(1);

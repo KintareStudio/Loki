@@ -421,7 +421,11 @@ public class RequestInterceptor {
         } catch (Exception e) {
             if (!spill.delete()) spill.deleteOnExit();
             targetConn.disconnect();
-            throw e instanceof IOException ? (IOException) e : new IOException(e);
+            if (e instanceof IOException) throw (IOException) e;
+            IOException wrapped = new IOException(e.toString());
+            //noinspection UnnecessaryInitCause
+            wrapped.initCause(e);
+            throw wrapped;
         } finally {
             if (is != null) try { is.close(); } catch (IOException ignored) {}
             if (os != null) try { os.close(); } catch (IOException ignored) {}

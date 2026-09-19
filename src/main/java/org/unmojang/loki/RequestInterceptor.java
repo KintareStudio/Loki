@@ -178,6 +178,7 @@ public class RequestInterceptor {
 
             // Textures
             if (path.startsWith("/MinecraftSkins/") || path.startsWith("/skin/")
+                    // AlphaVer mod
                     || (host.equals("raw.githubusercontent.com")
                     && path.startsWith("/exalpha-dev/exalpha-dev.github.io/main/skincache/"))) {
                 String username = Ygglib.getUsernameFromPath(path);

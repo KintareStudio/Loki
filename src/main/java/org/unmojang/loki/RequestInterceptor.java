@@ -215,7 +215,7 @@ public class RequestInterceptor {
                     }
 
                     if (path.equals("/Minecraft.Download/versions/versions.json")) {
-                        return byteServingConnection(Ygglib.getReclassifiedManifest(), originalUrl, null);
+                        return byteServingConnection(Ygglib.getReclassifiedManifest(), originalUrl);
                     } else if (path.startsWith("/Minecraft.Download/versions/")) {
                         if (path.endsWith(".json")) {
                             String version = path.substring(path.lastIndexOf('/') + 1).replaceFirst("\\.json$", "");
@@ -246,7 +246,7 @@ public class RequestInterceptor {
             // Replace version manifest with BetterJSONs
             if (host.equals("launchermeta.mojang.com") && path.equals("/mc/game/version_manifest.json")) {
                 try {
-                    return byteServingConnection(Ygglib.getReclassifiedManifest(), originalUrl, null);
+                    return byteServingConnection(Ygglib.getReclassifiedManifest(), originalUrl);
                 } catch (Exception e) {
                     Loki.log.error("Failed to serve BetterJSONs manifest", e);
                     return originalConn;
@@ -452,23 +452,20 @@ public class RequestInterceptor {
             }
         }
         zout.close();
-        return byteServingConnection(merged.toByteArray(), httpConn.getURL(), null);
+        return byteServingConnection(merged.toByteArray(), httpConn.getURL());
     }
 
     // Serves a buffered byte[] as the connection body with a computed MD5 ETag
-    private static HttpURLConnection byteServingConnection(final byte[] data, URL url, final HttpURLConnection backing) {
+    private static HttpURLConnection byteServingConnection(final byte[] data, URL url) {
         return new HttpURLConnection(url) {
             @Override public void connect() {}
             @Override public InputStream getInputStream() { return new ByteArrayInputStream(data); }
             @Override public String getHeaderField(String name) {
-                if ("ETag".equalsIgnoreCase(name)) return md5Etag(data);
-                return backing != null ? backing.getHeaderField(name) : null;
+                return "ETag".equalsIgnoreCase(name) ? md5Etag(data) : null;
             }
-            @Override public int getResponseCode() throws IOException {
-                return backing != null ? backing.getResponseCode() : 200;
-            }
-            @Override public void disconnect() { if (backing != null) backing.disconnect(); }
-            @Override public boolean usingProxy() { return backing != null && backing.usingProxy(); }
+            @Override public int getResponseCode() { return 200; }
+            @Override public void disconnect() {}
+            @Override public boolean usingProxy() { return false; }
         };
     }
 

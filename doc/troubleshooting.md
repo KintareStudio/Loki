@@ -26,4 +26,31 @@ or this:
 
 then you need to upgrade your Java installation. If the crash is something else, please file an issue.
 
+## Loki fails to connect to my API server
+
+If Loki logs something like:
+
+```
+**** CONNECTION WAS FORBIDDEN TO THE API SERVER!
+```
+
+then something in front of your API server is rejecting connections. This most commonly happens when the API server is behind Cloudflare.
+
+You can check whether the user agent is the problem by running the following commands:
+
+```
+$ curl -i -H "User-Agent: Java/1.8.0_51" https://drasl.example.com
+$ curl -i -H "User-Agent: Loki/1.2.3" https://drasl.example.com
+```
+
+If the first command gets a 403 response code and the second succeeds with a 200 response code, the API server (or something in front of it) is blocking Java user agents specifically.
+
+As a client-side workaround, you can try switching Loki's user agent with:
+
+```
+-DLoki.modify_user_agent=true
+```
+
+If both commands fail with a 403 response code, this workaround will not work. Please confirm you can visit the API server's page in your web browser, and notify your API server operator. This is not a problem with Loki, so you should not open an issue here about it.
+
 [^1]: If your server is Bukkit-based (Spigot, Paper, etc.) then you can install a No Chat Reports plugin.

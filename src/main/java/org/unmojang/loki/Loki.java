@@ -17,6 +17,7 @@ public class Loki {
     public static final boolean launcher_trigger_update = Boolean.getBoolean("Loki.launcher_trigger_update");
     public static final String launcher_version = System.getProperty("Loki.launcher_version");
     public static final boolean modded_capes = Boolean.getBoolean("Loki.modded_capes");
+    public static final boolean modify_user_agent = Boolean.getBoolean("Loki.modify_user_agent");
     public static final boolean username_validation = Boolean.getBoolean("Loki.username_validation");
     public static final boolean verify_signatures = Boolean.getBoolean("Loki.verify_signatures");
 

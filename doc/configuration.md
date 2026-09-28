@@ -64,12 +64,17 @@ Loki supports JVM arguments to enable or disable some behaviour.
   -DLoki.modded_capes=true
   ```
 
+- Replace Minecraft's default Java user agent with the Loki user agent [^2]
+  ```
+  -DLoki.modify_user_agent=true
+  ```
+
 - Re-enable the username validation added in 1.18.2 that kicks usernames containing invalid characters
   ```
   -DLoki.username_validation=true
   ```
 
-- Verify signatures on player certificates [^2]
+- Verify signatures on player certificates [^3]
   ```
   -DLoki.verify_signatures=true
   ```
@@ -115,4 +120,5 @@ ServicesHost: https://drasl.unmojang.org/services
 ```
 
 [^1]: Username-based profile lookups allow for displaying textures on offline mode servers.
-[^2]: This option is **NOT** necessary to ensure the integrity of chat reports made to the API server from clients. It may not be supported on some API servers, and even if it is supported, it may kick [fallback API server](https://github.com/unmojang/drasl/blob/master/doc/configuration.md) players.
+[^2]: This can confirm whether the API server blocks Java connections. This commonly happens when using Cloudflare.  See [troubleshooting](troubleshooting.md#loki-fails-to-connect-to-my-api-server).
+[^3]: This option is **NOT** necessary to ensure the integrity of chat reports made to the API server from clients. It may not be supported on some API servers, and even if it is supported, it may kick [fallback API server](https://github.com/unmojang/drasl/blob/master/doc/configuration.md) players.

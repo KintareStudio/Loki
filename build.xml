@@ -36,6 +36,7 @@
     <property name="tools.dir" value="${build.dir}/tools"/>
     <property name="dist.dir" value="${build.dir}/dist"/>
     <property name="temp.dir" value="${build.dir}/temp"/>
+    <property name="jdklibs.dir" value="${temp.dir}/jdklibs"/>
 
     <target name="init">
         <mkdir dir="${classes.dir}"/>
@@ -122,37 +123,46 @@
         </jar>
 
         <available file="${java_home}/jre/lib/rt.jar" property="proguard.rtjar"/>
-        <available file="${java_home}/jmods" type="dir" property="proguard.jmods"/>
-        <condition property="proguard.haslibs">
-            <or>
-                <isset property="proguard.rtjar"/>
-                <isset property="proguard.jmods"/>
-            </or>
-        </condition>
+        <available file="${java_home}/lib/modules" property="proguard.jimage"/>
+
+        <!-- Without platform classes ProGuard strips methods only the JDK calls -->
+        <fail message="No rt.jar or lib/modules found in ${java_home}; ProGuard needs the platform classes">
+            <condition>
+                <not>
+                    <or>
+                        <isset property="proguard.rtjar"/>
+                        <isset property="proguard.jimage"/>
+                    </or>
+                </not>
+            </condition>
+        </fail>
+
+        <delete dir="${jdklibs.dir}" if:set="proguard.jimage"/>
+        <exec executable="${java_home}/bin/jimage" failonerror="true" if:set="proguard.jimage">
+            <arg value="extract"/>
+            <arg value="--dir"/>
+            <arg file="${jdklibs.dir}"/>
+            <arg value="--include"/>
+            <arg value="regex:/(java\.base|java\.instrument|java\.desktop|java\.datatransfer|java\.management|jdk\.unsupported)/.*"/>
+            <arg file="${java_home}/lib/modules"/>
+        </exec>
+        <pathconvert property="jdklibs.path" if:set="proguard.jimage">
+            <dirset dir="${jdklibs.dir}" includes="*"/>
+        </pathconvert>
 
         <java classname="proguard.ProGuard" fork="true" failonerror="true">
             <classpath>
                 <fileset dir="${tools.dir}" includes="*.jar"/>
             </classpath>
             <arg value="@proguard.pro"/>
-            <arg value="-dontoptimize" unless:set="proguard.haslibs"/>
-            <!-- Without platform libraryjars, every java.* reference is unresolved; suppress the noise -->
-            <arg value="-dontwarn" unless:set="proguard.haslibs"/>
-            <arg value="**" unless:set="proguard.haslibs"/>
             <arg value="-injars"/>
             <arg file="${temp.dir}/${artifact}-${version}-fat.jar"/>
             <arg value="-outjars"/>
             <arg file="${temp.dir}/${artifact}-${version}-shrunk.jar"/>
             <arg value="-libraryjars" if:set="proguard.rtjar"/>
             <arg value="${java_home}/jre/lib/rt.jar" if:set="proguard.rtjar"/>
-            <arg value="-libraryjars" if:set="proguard.jmods"/>
-            <arg value="${java_home}/jmods/java.base.jmod(!**.jar;!module-info.class)" if:set="proguard.jmods"/>
-            <arg value="-libraryjars" if:set="proguard.jmods"/>
-            <arg value="${java_home}/jmods/java.instrument.jmod(!**.jar;!module-info.class)" if:set="proguard.jmods"/>
-            <arg value="-libraryjars" if:set="proguard.jmods"/>
-            <arg value="${java_home}/jmods/java.desktop.jmod(!**.jar;!module-info.class)" if:set="proguard.jmods"/>
-            <arg value="-libraryjars" if:set="proguard.jmods"/>
-            <arg value="${java_home}/jmods/java.management.jmod(!**.jar;!module-info.class)" if:set="proguard.jmods"/>
+            <arg value="-libraryjars" if:set="proguard.jimage"/>
+            <arg value="${jdklibs.path}" if:set="proguard.jimage"/>
         </java>
 
         <path id="jarjar.classpath">

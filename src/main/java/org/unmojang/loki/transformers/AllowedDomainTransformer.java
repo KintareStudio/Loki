@@ -7,6 +7,7 @@ import org.unmojang.loki.Loki;
 import org.unmojang.loki.LokiUtil;
 
 import java.util.List;
+import java.util.regex.Pattern;
 
 public class AllowedDomainTransformer extends LokiTransformer {
 
@@ -35,7 +36,14 @@ public class AllowedDomainTransformer extends LokiTransformer {
                 if (mn.localVariables != null) mn.localVariables.clear();
 
                 List<String> skinDomains = LokiUtil.SERVER_TEXTURE_DOMAINS;
-                if (skinDomains.isEmpty()) { // allow any skin domain
+                boolean allowAnyDomain = skinDomains.isEmpty();
+                for (String domain : skinDomains) {
+                    if (domain.matches("\\*+")) {
+                        allowAnyDomain = true;
+                        break;
+                    }
+                }
+                if (allowAnyDomain) {
                     mn.instructions.add(new InsnNode(Opcodes.ICONST_1));
                     mn.instructions.add(new InsnNode(Opcodes.IRETURN));
                 } else {
@@ -92,11 +100,16 @@ public class AllowedDomainTransformer extends LokiTransformer {
             il.add(new JumpInsnNode(Opcodes.IFNE, returnTrue));
         }
 
-        // Skin domains: host.endsWith(d)
+        // Skin domains
         for (String d : skinDomains) {
             il.add(new VarInsnNode(Opcodes.ALOAD, hostSlot));
-            il.add(new LdcInsnNode(d));
-            il.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, "java/lang/String", "endsWith", "(Ljava/lang/String;)Z", false));
+            if (d.indexOf('*') >= 0) {
+                il.add(new LdcInsnNode(wildcardRegex(d)));
+                il.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, "java/lang/String", "matches", "(Ljava/lang/String;)Z", false));
+            } else {
+                il.add(new LdcInsnNode(d));
+                il.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, "java/lang/String", "endsWith", "(Ljava/lang/String;)Z", false));
+            }
             il.add(new JumpInsnNode(Opcodes.IFNE, returnTrue));
         }
 
@@ -112,5 +125,15 @@ public class AllowedDomainTransformer extends LokiTransformer {
         il.add(new InsnNode(Opcodes.POP));
         il.add(new InsnNode(Opcodes.ICONST_0));
         il.add(new InsnNode(Opcodes.IRETURN));
+    }
+
+    private static String wildcardRegex(String domain) {
+        String[] parts = domain.split("\\*", -1);
+        StringBuilder regex = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            if (i > 0) regex.append("(?s:.*)");
+            regex.append(Pattern.quote(parts[i]));
+        }
+        return regex.toString();
     }
 }

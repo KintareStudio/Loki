@@ -343,6 +343,16 @@ public class LokiUtil {
             }
             Json.JSONObject json = new Json.JSONObject(jsonText);
 
+            Json.JSONObject urls = json.optJSONObject("urlsRedefining");
+            if (urls != null) {
+                Map<String, String> overrides = new HashMap<String, String>();
+                String[] names = {"api", "authserver", "sessionserver", "minecraftservices",
+                        "realms", "signaling", "filtering"};
+                for (int i = 0; i < names.length; i++) overrides.put(names[i], urls.optString(names[i], ""));
+                for (Map.Entry<String, String> entry : ServiceOverrides.apply(overrides).entrySet())
+                    RequestInterceptor.registerAliHost(entry.getKey(), entry.getValue());
+            }
+
             Json.JSONObject meta = json.optJSONObject("meta");
             if (meta != null) {
                 SERVER_NAME = meta.optString("serverName", "");
@@ -404,12 +414,13 @@ public class LokiUtil {
         System.setProperty("minecraft.api.profiles.host", authlibInjectorApiLocation + "/api");
         System.setProperty("minecraft.api.session.host", authlibInjectorApiLocation + "/sessionserver");
         System.setProperty("minecraft.api.services.host", authlibInjectorApiLocation + "/minecraftservices");
-        RequestInterceptor.registerAliHost("signaling-afd.franchise.minecraft-services.net", authlibInjectorApiLocation + "/signaling");
 
         // Velocity
         System.setProperty("mojang.sessionserver", authlibInjectorApiLocation + "/sessionserver/session/minecraft/hasJoined");
 
         initServerMetadata(authlibInjectorApiLocation);
+        if (!RequestInterceptor.YGGDRASIL_MAP.containsKey("signaling-afd.franchise.minecraft-services.net"))
+            RequestInterceptor.registerAliHost("signaling-afd.franchise.minecraft-services.net", authlibInjectorApiLocation + "/signaling");
     }
 
     public static void apply1_21_9Fixes() {

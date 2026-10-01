@@ -4,6 +4,10 @@
 
 Loki supports JVM arguments to enable or disable some behaviour.
 
+Signature verification, chat restrictions, Patchy server blocking and telemetry are enabled by
+default. Set the corresponding option to `false` to disable it. Enabling telemetry lets the game
+use the API server's telemetry attributes; it does not force telemetry when the server disallows it.
+
 - Use Authlib-Injector URL instead of `minecraft.api.*.host` parameters
   ```
   -DLoki.url=https://drasl.unmojang.org
@@ -24,7 +28,7 @@ Loki supports JVM arguments to enable or disable some behaviour.
   -DLoki.auto_update=true
   ```
 
-- Re-enable chat restrictions
+- Respect the API server's chat restrictions (default: `true`)
   ```
   -DLoki.chat_restrictions=true
   ```
@@ -54,17 +58,17 @@ Loki supports JVM arguments to enable or disable some behaviour.
   -DLoki.disable_profile_advertise=true
   ```
 
-- Re-enable patchy (server blocking)
+- Enable Patchy server blocking (default: `true`)
   ```
   -DLoki.enable_patchy=true
   ```
 
-- Re-enable snooper
+- Allow telemetry according to the API server's attributes (default: `true`)
   ```
   -DLoki.enable_snooper=true
   ```
 
-- Verify signatures instead of accepting them: profile properties from 1.7.6, player certificates from 1.19, and chat on 1.19+ servers where `enforce-secure-profile=true` is set in `server.properties` [^2] [^4]
+- Verify signatures (default: `true`): profile properties from 1.7.6, player certificates from 1.19, and chat on 1.19+ servers where `enforce-secure-profile=true` is set in `server.properties` [^2] [^4]
   ```
   -DLoki.enforce_secure_profile=true
   ```
@@ -75,8 +79,8 @@ Loki supports JVM arguments to enable or disable some behaviour.
   ```
   -DLoki.enforce_secure_profile=false
   ```
-  Set either way, the flag is your answer and a server cannot change it. Left unset, a server that
-  says it checks signatures is taken at its word for as long as you are on it.
+  Set either way, the flag is your answer and a server cannot change it. Left unset, signatures
+  are verified on every server.
 
 - Force the applet launcher to re-download the game, for pre-Beta 1.3 applet launchers that lack a "Force Update" option
   ```

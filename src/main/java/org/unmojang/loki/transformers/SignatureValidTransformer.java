@@ -13,9 +13,9 @@ import org.unmojang.loki.LokiUtil;
 /**
  * Decides whether a profile property's signature is good, on the versions that ask.
  * <p>
- * By default this answers yes without looking, which is the only thing that works when the API
- * server does not sign at all. With {@code Loki.enforce_secure_profile} it becomes a real check
- * against the keys the API server publishes, in {@link org.unmojang.loki.hooks.ProfileKeys}.
+ * By default this checks the signature against the keys the API server publishes, in
+ * {@link org.unmojang.loki.hooks.ProfileKeys}. Explicitly disabling verification permits API
+ * servers that do not sign properties.
  * <p>
  * The replacement reads the property's own {@code value} and {@code signature} fields directly. It
  * is emitted into the declaring class, so private access is not a problem and no reflection is

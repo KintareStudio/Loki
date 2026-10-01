@@ -42,6 +42,9 @@ public class RequestInterceptor {
         putIfNotNull(tmp, "sessionserver.mojang.com", sessionHost != null ? sessionHost : LokiUtil.MANIFEST_ATTRS.get("SessionHost"));
         putIfNotNull(tmp, "api.minecraftservices.com", servicesHost != null ? servicesHost : LokiUtil.MANIFEST_ATTRS.get("ServicesHost"));
 
+        tmp.putAll(ServiceOverrides.apply(Collections.singletonMap("realms",
+                System.getProperty("minecraft.api.realms.host"))));
+
         YGGDRASIL_MAP = tmp;
         IS_MOJANG = "https://api.mojang.com".equals(YGGDRASIL_MAP.get("api.mojang.com"))
                 && "https://sessionserver.mojang.com".equals(YGGDRASIL_MAP.get("sessionserver.mojang.com"));

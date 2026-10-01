@@ -24,8 +24,8 @@ import java.util.List;
  * Verifies profile property signatures against the keys the API server publishes.
  * <p>
  * This is what {@code Property.isSignatureValid} becomes on 1.7.6 through 1.18.2 when
- * {@code Loki.enforce_secure_profile} is set. Without the flag that method keeps returning true, as
- * it has always done, because a client whose API server does not sign at all must still work.
+ * signature verification is enabled, which is the default. An explicit false setting retains
+ * compatibility with API servers that do not sign properties.
  *
  * <h2>Why a set of keys and not one</h2>
  * The method Loki replaces takes a single {@code PublicKey}, which is why vanilla can only ever
@@ -340,22 +340,13 @@ public final class ProfileKeys {
     /**
      * Whether signatures are being checked at all, right now.
      * <p>
-     * Asked per call rather than decided when the class was patched, because it can change during a
-     * session: a server that enforces secure profiles says so in its ping, and Loki honours that for
-     * as long as the player is on it. Baking the answer into the bytecode, as this used to, meant a
-     * client that started without the flag could never begin checking, whatever a server asked for.
-     * <p>
-     * A server is only asked when the client has not already said. Setting the flag either way is
-     * the client saying so, and a server does not get to argue with it in either direction.
+     * Verification is enabled by default. An explicit local setting takes precedence over a
+     * server's declaration, with enforce_secure_profile preferred to the upstream alias.
      */
     public static boolean enforcing() {
-        // Three answers out of one flag, because there are three things an operator can mean.
-        // Setting it says check everywhere; setting it to false says do not, whatever a server
-        // asks for; and leaving it alone says take the server's word for it.
         String chosen = System.getProperty("Loki.enforce_secure_profile");
-        if (chosen == null) chosen = System.getProperty("Loki.verify_signatures");
-        if (chosen != null) return Boolean.parseBoolean(chosen);
-        return Boolean.getBoolean(ProfileRedirect.PROP_ENFORCE);
+        if (chosen == null) chosen = System.getProperty("Loki.verify_signatures", "true");
+        return Boolean.parseBoolean(chosen);
     }
 
     private static boolean verify(PublicKey key, String value, byte[] signature) {

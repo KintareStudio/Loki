@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build with Java 8
@@ -40,7 +43,7 @@ jobs:
         run: ant ivy
 
       - name: Build
-        run: ant clean build
+        run: ant clean test build
 
       - name: Extract version from tag
         if: startsWith(github.ref, 'refs/tags/v')

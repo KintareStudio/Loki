@@ -322,8 +322,21 @@ public final class LegacyStreams {
                 decided = true;
                 in.mark(block.headerBytes() + LegacyProtocol.PAYLOAD_MAX_BYTES);
 
+                // One byte first, and a whole header only once that byte says a block is starting.
+                // Waiting for a header from a server that is not sending one is how this deadlocks:
+                // it answers with its own next packet, which can be shorter than a header and can be
+                // the last thing it says until the client speaks again. Both ends then wait, and the
+                // server gives up on a login that never finished. Any server sends something here,
+                // so the one byte is safe to wait for; the rest of a header is not.
                 byte[] header = new byte[block.headerBytes()];
-                int got = fill(header, header.length);
+                int lead = in.read();
+                if (lead < 0 || (byte) lead != block.firstByte()) {
+                    in.reset();
+                    return;
+                }
+                header[0] = (byte) lead;
+
+                int got = 1 + fill(header, 1, header.length - 1);
                 int length = got < header.length ? -1 : block.bodyLength(header, got);
                 if (length < 0) {
                     in.reset();
@@ -331,7 +344,7 @@ public final class LegacyStreams {
                 }
 
                 byte[] body = new byte[length];
-                if (fill(body, length) < length) {
+                if (fill(body, 0, length) < length) {
                     in.reset();
                     return;
                 }
@@ -341,10 +354,10 @@ public final class LegacyStreams {
                 }
             }
 
-            private int fill(byte[] into, int length) throws IOException {
+            private int fill(byte[] into, int at, int length) throws IOException {
                 int got = 0;
                 while (got < length) {
-                    int read = in.read(into, got, length - got);
+                    int read = in.read(into, at + got, length - got);
                     if (read < 0) break;
                     got += read;
                 }

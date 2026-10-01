@@ -9,21 +9,21 @@ public class Loki {
     public static final NilLogger log = NilLogger.get("Loki");
 
     public static final boolean auto_update = Boolean.getBoolean("Loki.auto_update");
-    public static final boolean chat_restrictions =  Boolean.getBoolean("Loki.chat_restrictions");
+    public static final boolean chat_restrictions = Boolean.parseBoolean(System.getProperty("Loki.chat_restrictions", "true"));
     public static boolean disable_factory = Boolean.getBoolean("Loki.disable_factory");
     public static final boolean disable_profile_lookup = Boolean.getBoolean("Loki.disable_profile_lookup");
     public static final boolean disable_profile_advertise = Boolean.getBoolean("Loki.disable_profile_advertise");
     public static final boolean disable_profile_redirect = Boolean.getBoolean("Loki.disable_profile_redirect");
-    public static final boolean enable_patchy =  Boolean.getBoolean("Loki.enable_patchy");
-    public static final boolean enable_snooper =  Boolean.getBoolean("Loki.enable_snooper");
+    public static final boolean enable_patchy = Boolean.parseBoolean(System.getProperty("Loki.enable_patchy", "true"));
+    public static final boolean enable_snooper = Boolean.parseBoolean(System.getProperty("Loki.enable_snooper", "true"));
     public static final boolean enforce_secure_profile = Boolean.parseBoolean(System.getProperty(
-            "Loki.enforce_secure_profile", System.getProperty("Loki.verify_signatures", "false")));
+            "Loki.enforce_secure_profile", System.getProperty("Loki.verify_signatures", "true")));
     public static final boolean launcher_trigger_update = Boolean.getBoolean("Loki.launcher_trigger_update");
     public static final String launcher_version = System.getProperty("Loki.launcher_version");
     public static final boolean modded_capes = Boolean.getBoolean("Loki.modded_capes");
     public static final boolean modify_user_agent = Boolean.getBoolean("Loki.modify_user_agent");
     public static final boolean username_validation = Boolean.getBoolean("Loki.username_validation");
-    public static final boolean verify_signatures = Boolean.getBoolean("Loki.verify_signatures");
+    public static final boolean verify_signatures = enforce_secure_profile;
 
     public static void premain(String agentArgs, Instrumentation inst) {
         if (auto_update && LokiUpdater.updateAndSwap(agentArgs, inst)) return;
@@ -43,11 +43,12 @@ public class Loki {
         RequestInterceptor.setURLFactory();
         inst.addTransformer(new YggdrasilURLTransformer()); // Transform Yggdrasil URL strings
         inst.addTransformer(new AppletParameterTransformer()); // Fetch mppass for classic multiplayer
+        inst.addTransformer(new PlayerSafetyFilterTransformer());
         inst.addTransformer(new DiscoveryServiceTransformer()); // Feed authlib a crafted discovery doc. 26.3+
 
         // Textures
         inst.addTransformer(new AllowedDomainTransformer()); // Allowed texture domains. 1.7.6-1.16.5, 1.17-1.19.2, 1.19.3+
-        inst.addTransformer(new SignatureValidTransformer()); // Stub texture signature checks. 1.7.6-1.18.2
+        inst.addTransformer(new SignatureValidTransformer()); // Verify texture signatures. 1.7.6-1.18.2
         inst.addTransformer(new FetchTexturesByPlayerNameTransformer()); // Fetch textures on offline mode servers
         inst.addTransformer(new NettyConnectTransformer()); // Let a server redirect profile queries. 1.7+
         inst.addTransformer(new NettyBindTransformer()); // Declare this server's API server to Loki clients. 1.7+

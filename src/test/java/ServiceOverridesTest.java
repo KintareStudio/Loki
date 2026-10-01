@@ -21,6 +21,17 @@ public class ServiceOverridesTest {
   read.invoke(null, "https://unreachable.invalid/authlib-injector");
   if (!"https://metadata-realms.test".equals(RequestInterceptor.YGGDRASIL_MAP.get("pc.realms.minecraft.net"))) throw new AssertionError("advertised Realm override");
   if (!"https://metadata-filtering.test/".equals(System.getProperty("Loki.filteringV1.authority"))) throw new AssertionError("advertised Filtering authority");
+  System.setProperty("minecraft.api.services.host", "https://discovery.test/authlib-injector/minecraftservices/");
+  org.unmojang.loki.util.Json.JSONObject discovery = new org.unmojang.loki.util.Json.JSONObject(
+      org.unmojang.loki.hooks.Hooks.getDiscoveryJson()).getJSONObject("discovery");
+  org.unmojang.loki.util.Json.JSONObject player = discovery.getJSONObject("player").getJSONObject("endpoints");
+  String base = "https://discovery.test/authlib-injector/minecraftservices";
+  if (!(base + "/friends").equals(player.getJSONObject("getFriends").getString("uri"))) throw new AssertionError("friends discovery");
+  if (!(base + "/friends").equals(player.getJSONObject("updateFriends").getString("uri"))) throw new AssertionError("friends update discovery");
+  if (!(base + "/presence").equals(player.getJSONObject("updatePresence").getString("uri"))) throw new AssertionError("presence discovery");
+  if (discovery.getJSONObject("authentication").getJSONObject("endpoints").has("loginXbox")) throw new AssertionError("Xbox login must not be announced");
+  if (!"https://metadata-realms.test".equals(RequestInterceptor.YGGDRASIL_MAP.get("java.frontend.realms.minecraft-services.net"))) throw new AssertionError("Discovery changed Realms routing");
+  if (!"https://metadata-filtering.test/".equals(System.getProperty("Loki.filteringV1.authority"))) throw new AssertionError("Discovery changed Filtering authority");
   System.out.println("Loki metadata and service override checks passed");
  }
 }

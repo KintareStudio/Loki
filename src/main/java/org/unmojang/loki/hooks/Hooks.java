@@ -229,9 +229,9 @@ public class Hooks {
         putEndpoint(player, "getAttributes", services + "/player/attributes", null);
         putEndpoint(player, "updateAttributes", services + "/player/attributes", null);
         putEndpoint(player, "sendReport", services + "/player/report", null);
-        putEndpoint(player, "getFriends", services + "/player/friends", null);
-        putEndpoint(player, "updateFriends", services + "/player/friends", null);
-        putEndpoint(player, "updatePresence", services + "/player/presence", null);
+        putEndpoint(player, "getFriends", services + "/friends", null);
+        putEndpoint(player, "updateFriends", services + "/friends", null);
+        putEndpoint(player, "updatePresence", services + "/presence", null);
 
         // Handled in AllowedDomainTransformer, this is a stub
         Json.JSONArray textureUris = new Json.JSONArray();

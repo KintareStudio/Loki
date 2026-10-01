@@ -68,6 +68,7 @@ Loki supports JVM arguments to enable or disable some behaviour.
   ```
   -DLoki.enforce_secure_profile=true
   ```
+  The upstream option `-DLoki.verify_signatures=true` is also supported. If both options are set, `Loki.enforce_secure_profile` takes precedence.
   On a server, this also tells the Loki clients that join to check as well. [^3]
 
 - Refuse it, whatever a server asks for [^3]
@@ -90,6 +91,11 @@ Loki supports JVM arguments to enable or disable some behaviour.
 - Re-enable modded capes with username-based lookups (OptiFine, Cloaks+, etc.)
   ```
   -DLoki.modded_capes=true
+  ```
+
+- Replace Minecraft's default Java user agent with the Loki user agent [^5]
+  ```
+  -DLoki.modify_user_agent=true
   ```
 
 - Re-enable the username validation added in 1.18.2 that kicks usernames containing invalid characters
@@ -144,3 +150,5 @@ ServicesHost: https://drasl.unmojang.org/services
 [^3]: A server can name an API server for Loki clients to resolve profile queries against, so players are visible even when the client and the server do not share an API server. Only profile reads are affected, and only for as long as the client is on that server. Supported on every version Loki supports; on 1.7 and later it travels in the server list ping, below that on the login handshake.
 [^4]: Without this, the signature checks return true without looking, which is what lets an API server that does not sign at all work. With it, they are checked against every key the API server publishes — `signaturePublickeys` in authlib-injector metadata, or `profilePropertyKeys` and `playerCertificateKeys` from `/publickeys` — plus Mojang's own key, which authlib bundles up to 1.19.4. Property keys and certificate keys are kept apart: one cannot vouch for the other.
 [^2]: This option is **NOT** necessary to ensure the integrity of chat reports made to the API server from clients, and will kick [fallback API server](https://github.com/unmojang/drasl/blob/master/doc/configuration.md) players.
+
+[^5]: This can confirm whether the API server blocks Java connections, for example behind Cloudflare. See [troubleshooting](troubleshooting.md#loki-fails-to-connect-to-my-api-server).

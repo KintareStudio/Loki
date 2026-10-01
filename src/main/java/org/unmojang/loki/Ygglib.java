@@ -463,9 +463,7 @@ public class Ygglib {
             xml.append("</ListBucketResult>");
             return xml.toString().getBytes("UTF-8");
         } catch (Exception e) {
-            // if currentVersionId is null, we are not using one of Mojang's java launchers. Whatever launcher we're
-            // running under *should* be handling legacy resource downloads for us, so it's not an issue.
-            if (LauncherHooks.currentVersionId != null) Loki.log.error("Failed to build legacy resources listing", e);
+            Loki.log.error("Failed to build legacy resources listing", e);
             return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult></ListBucketResult>".getBytes();
         }
     }
@@ -479,9 +477,7 @@ public class Ygglib {
             appendResourceLines(sb, index.optJSONObject("custom"));
             return sb.toString().getBytes("UTF-8");
         } catch (Exception e) {
-            // if currentVersionId is null, we are not using one of Mojang's java launchers. Whatever launcher we're
-            // running under *should* be handling legacy resource downloads for us, so it's not an issue.
-            if (LauncherHooks.currentVersionId != null) Loki.log.error("Failed to build legacy resources listing", e);
+            Loki.log.error("Failed to build legacy resources listing", e);
             return new byte[0];
         }
     }

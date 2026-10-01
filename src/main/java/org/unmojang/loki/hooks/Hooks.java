@@ -1,21 +1,16 @@
 package org.unmojang.loki.hooks;
 
-import org.unmojang.loki.util.Base64;
 import org.unmojang.loki.util.HttpUtil;
 import org.unmojang.loki.util.Json;
 import org.unmojang.loki.util.UuidBatcher;
 import org.unmojang.loki.util.logger.NilLogger;
 
-import java.io.*;
 import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.net.*;
 import java.security.*;
-import java.security.spec.InvalidKeySpecException;
-import java.security.spec.X509EncodedKeySpec;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -102,7 +97,18 @@ public class Hooks {
         if (allowlist.length() == 0) return true;
         String[] domains = allowlist.split(",");
         for (String domain : domains) {
-            if (domain.length() != 0 && host.endsWith(domain)) return true;
+            if (domain.length() == 0) continue;
+            if (domain.indexOf('*') < 0) {
+                if (host.endsWith(domain)) return true;
+            } else {
+                String[] parts = domain.split("\\*", -1);
+                StringBuilder regex = new StringBuilder();
+                for (int i = 0; i < parts.length; i++) {
+                    if (i > 0) regex.append("(?s:.*)");
+                    regex.append(java.util.regex.Pattern.quote(parts[i]));
+                }
+                if (host.matches(regex.toString())) return true;
+            }
         }
         return false;
     }

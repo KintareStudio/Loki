@@ -1,6 +1,8 @@
 package org.unmojang.loki;
 
 import org.unmojang.loki.hooks.*;
+import org.unmojang.loki.transformers.UserAgentTransformer;
+import org.unmojang.loki.util.Base64;
 import org.unmojang.loki.util.BouncyCastleUtils;
 import org.unmojang.loki.util.HttpUtil;
 import org.unmojang.loki.util.Json;
@@ -31,6 +33,8 @@ public class LokiUtil {
             "skin.prinzeugen.net"
     );
     public static URL LAUNCHER_VERSION_URL = null;
+    private static Instrumentation INST;
+    private static boolean USER_AGENT_OVERRIDDEN = false;
 
     private static void initManifestAttributes() {
         if (!MANIFEST_ATTRS.isEmpty()) return;
@@ -128,6 +132,14 @@ public class LokiUtil {
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(5000);
             conn.connect();
+            if (conn.getResponseCode() == HttpURLConnection.HTTP_FORBIDDEN) {
+                Loki.log.error("**** CONNECTION WAS FORBIDDEN TO THE API SERVER!");
+                Loki.log.error("Loki was forbidden from connecting to your API server. This may be due");
+                Loki.log.error("to your API server using Cloudflare, which blocks connections to Java");
+                Loki.log.error("user agents. See Loki's troubleshooting documentation for more");
+                Loki.log.error("information and potential solutions.");
+                System.exit(1);
+            }
             return true;
         } catch (SSLHandshakeException e) {
             String message = e.getMessage();
@@ -147,6 +159,14 @@ public class LokiUtil {
                 Loki.log.error("support AES128-SHA or AES256-SHA ciphers.");
                 System.exit(1);
             }
+            Loki.log.error("**** LOKI FAILED TO CONNECT TO THE API SERVER!");
+            Loki.log.error("Something went wrong while attempting to connect to your API server.");
+            Loki.log.error("More than likely, this is due to your API server being misconfigured");
+            Loki.log.error("in some way, or having some sort of technical difficulties. Please");
+            Loki.log.error("contact your API server operator and provide the full game log. If you");
+            Loki.log.error("are the API server operator, you may file an issue on Loki detailing");
+            Loki.log.error("the problem. Please provide the full game log, the API server's URL,");
+            Loki.log.error("and as much information about your API server environment as possible.");
             Loki.log.error("Connection failed", e);
             throw new RuntimeException(e);
         }
@@ -223,12 +243,14 @@ public class LokiUtil {
     }
 
     private static void conditionallySetUserAgent(String url) {
-        if (url == null || url.length() == 0) return;
+        if (USER_AGENT_OVERRIDDEN || url == null || url.length() == 0) return;
         try {
             String host = new URL(canonicalizeUrl(url)).getHost();
-            if (MISCONFIGURED_API_SERVERS.contains(host)) {
-                System.setProperty("http.agent", "Loki/" + LokiUtil.getAgentVersion());
-                Loki.log.debug("Overriding default user agent (blocked by API server)");
+            if (MISCONFIGURED_API_SERVERS.contains(host) || Loki.modify_user_agent) {
+                USER_AGENT_OVERRIDDEN = true;
+                addRetransformTransformer(new UserAgentTransformer("Loki/" + getAgentVersion()), INST);
+                retransformClass("sun.net.www.protocol.http.HttpURLConnection", INST);
+                retransformClass("jdk.internal.net.http.HttpRequestImpl", INST);
             }
         } catch (MalformedURLException ignored) {}
     }
@@ -365,6 +387,7 @@ public class LokiUtil {
                 System.setProperty(ProfileKeys.PROP_SIGNATURE_KEYS, signatureKeys.toString());
                 Loki.log.debug("Added signing keys from authlib-injector metadata");
             }
+
         } catch (Exception e) {
             Loki.log.error("Failed to get server metadata", e);
         }
@@ -637,6 +660,7 @@ public class LokiUtil {
     }
 
     public static void earlyInit(String agentArgs, Instrumentation inst) {
+        INST = inst;
         if (!isRetransformSupported(inst)) {
             if (JAVA_MAJOR > 5) { // Causes more problems on Java 9+, and we shouldn't encounter this anyway
                 Loki.log.error("RETRANSFORMATION IS NOT SUPPORTED?! EXITING!");

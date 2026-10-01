@@ -62,7 +62,8 @@ public class RequestInterceptor {
                 "api.ashcon.app",
                 "mineskin.eu",
                 "minotar.net",
-                "skinsystem.ely.by"
+                "skinsystem.ely.by",
+                "raw.githubusercontent.com"
         ));
         if (!Loki.enable_snooper) {
             INTERCEPTED_DOMAINS.add("snoop.minecraft.net");
@@ -179,11 +180,14 @@ public class RequestInterceptor {
             }
 
             // Textures
-            if (path.startsWith("/MinecraftSkins") || path.startsWith("/skin")) {
+            if (path.startsWith("/MinecraftSkins/") || path.startsWith("/skin/")
+                    // AlphaVer mod
+                    || (host.equals("raw.githubusercontent.com")
+                    && path.startsWith("/exalpha-dev/exalpha-dev.github.io/main/skincache/"))) {
                 String username = Ygglib.getUsernameFromPath(path);
                 Loki.log.info("Intercepting skin lookup for " + username);
                 return Ygglib.getTexture(originalUrl, originalConn, username, "SKIN");
-            } else if (path.startsWith("/MinecraftCloaks")) {
+            } else if (path.startsWith("/MinecraftCloaks/")) {
                 String username = Ygglib.getUsernameFromPath(path);
                 Loki.log.info("Intercepting cape lookup for " + username);
                 return Ygglib.getTexture(originalUrl, originalConn, username, "CAPE");
@@ -218,7 +222,7 @@ public class RequestInterceptor {
                     }
 
                     if (path.equals("/Minecraft.Download/versions/versions.json")) {
-                        return byteServingConnection(Ygglib.getReclassifiedManifest(), originalUrl, null);
+                        return byteServingConnection(Ygglib.getReclassifiedManifest(), originalUrl);
                     } else if (path.startsWith("/Minecraft.Download/versions/")) {
                         if (path.endsWith(".json")) {
                             String version = path.substring(path.lastIndexOf('/') + 1).replaceFirst("\\.json$", "");
@@ -249,7 +253,7 @@ public class RequestInterceptor {
             // Replace version manifest with BetterJSONs
             if (host.equals("launchermeta.mojang.com") && path.equals("/mc/game/version_manifest.json")) {
                 try {
-                    return byteServingConnection(Ygglib.getReclassifiedManifest(), originalUrl, null);
+                    return byteServingConnection(Ygglib.getReclassifiedManifest(), originalUrl);
                 } catch (Exception e) {
                     Loki.log.error("Failed to serve BetterJSONs manifest", e);
                     return originalConn;
@@ -291,7 +295,9 @@ public class RequestInterceptor {
             if (host.equals("s3.amazonaws.com") && path.startsWith("/Minecraft.Resources")) resourcePrefix = "/Minecraft.Resources";
             else if (host.equals("s3.amazonaws.com") && path.startsWith("/MinecraftResources")) resourcePrefix = "/MinecraftResources";
             else if (host.equals("www.minecraft.net") && path.startsWith("/resources")) resourcePrefix = "/resources";
-            if (resourcePrefix != null) {
+            // if currentVersionId is null, we are not using one of Mojang's java launchers. Whatever launcher we're
+            // running under *should* be handling legacy resource downloads for us, so it's not an issue.
+            if (resourcePrefix != null && LauncherHooks.currentVersionId != null) {
                 try {
                     String key = path.substring(resourcePrefix.length());
                     if (key.startsWith("/")) key = key.substring(1);
@@ -331,7 +337,7 @@ public class RequestInterceptor {
                 return Ygglib.getAshcon(originalUrl, originalConn, username);
             }
 
-            if (host.equals("minotar.net") && (path.startsWith("/helm") || path.startsWith("/avatar"))) {
+            if (host.equals("minotar.net") && (path.startsWith("/helm/") || path.startsWith("/avatar/"))) {
                 try {
                     String[] segments = path.split("/");
                     if (segments.length < 3 || segments[2].length() == 0) return originalConn;
@@ -350,19 +356,19 @@ public class RequestInterceptor {
                 }
             }
 
-            if (host.equals("skinsystem.ely.by") && path.startsWith("/textures")) {
+            if (host.equals("skinsystem.ely.by") && path.startsWith("/textures/")) {
                 String username = Ygglib.getUsernameFromPath(path);
                 Loki.log.info("Intercepting ely.by lookup for " + username);
                 return Ygglib.getElyBy(originalUrl, originalConn, username);
             }
 
             // Capes
-            if (host.equals("s.optifine.net") && path.startsWith("/capes")) {
+            if (host.equals("s.optifine.net") && path.startsWith("/capes/")) {
                 Loki.log.info("Intercepting OptiFine cape lookup");
                 return Ygglib.FakeURLConnection(originalUrl, originalConn, 403, ("Nice try ;)").getBytes("UTF-8"));
             }
 
-            if (host.equals("161.35.130.99") && path.startsWith("/capes")) {
+            if (host.equals("161.35.130.99") && path.startsWith("/capes/")) {
                 Loki.log.info("Intercepting Cloaks+ cape lookup");
                 return Ygglib.FakeURLConnection(originalUrl, originalConn, 403, ("Nice try ;)").getBytes("UTF-8"));
             }
@@ -464,7 +470,11 @@ public class RequestInterceptor {
         } catch (Exception e) {
             if (!spill.delete()) spill.deleteOnExit();
             targetConn.disconnect();
-            throw e instanceof IOException ? (IOException) e : new IOException(e);
+            if (e instanceof IOException) throw (IOException) e;
+            IOException wrapped = new IOException(e.toString());
+            //noinspection UnnecessaryInitCause
+            wrapped.initCause(e);
+            throw wrapped;
         } finally {
             if (is != null) try { is.close(); } catch (IOException ignored) {}
             if (os != null) try { os.close(); } catch (IOException ignored) {}
@@ -495,23 +505,20 @@ public class RequestInterceptor {
             }
         }
         zout.close();
-        return byteServingConnection(merged.toByteArray(), httpConn.getURL(), null);
+        return byteServingConnection(merged.toByteArray(), httpConn.getURL());
     }
 
     // Serves a buffered byte[] as the connection body with a computed MD5 ETag
-    private static HttpURLConnection byteServingConnection(final byte[] data, URL url, final HttpURLConnection backing) {
+    private static HttpURLConnection byteServingConnection(final byte[] data, URL url) {
         return new HttpURLConnection(url) {
             @Override public void connect() {}
             @Override public InputStream getInputStream() { return new ByteArrayInputStream(data); }
             @Override public String getHeaderField(String name) {
-                if ("ETag".equalsIgnoreCase(name)) return md5Etag(data);
-                return backing != null ? backing.getHeaderField(name) : null;
+                return "ETag".equalsIgnoreCase(name) ? md5Etag(data) : null;
             }
-            @Override public int getResponseCode() throws IOException {
-                return backing != null ? backing.getResponseCode() : 200;
-            }
-            @Override public void disconnect() { if (backing != null) backing.disconnect(); }
-            @Override public boolean usingProxy() { return backing != null && backing.usingProxy(); }
+            @Override public int getResponseCode() { return 200; }
+            @Override public void disconnect() {}
+            @Override public boolean usingProxy() { return false; }
         };
     }
 

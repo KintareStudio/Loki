@@ -16,11 +16,14 @@ public class Loki {
     public static final boolean disable_profile_redirect = Boolean.getBoolean("Loki.disable_profile_redirect");
     public static final boolean enable_patchy =  Boolean.getBoolean("Loki.enable_patchy");
     public static final boolean enable_snooper =  Boolean.getBoolean("Loki.enable_snooper");
-    public static final boolean enforce_secure_profile = Boolean.getBoolean("Loki.enforce_secure_profile");
+    public static final boolean enforce_secure_profile = Boolean.parseBoolean(System.getProperty(
+            "Loki.enforce_secure_profile", System.getProperty("Loki.verify_signatures", "false")));
     public static final boolean launcher_trigger_update = Boolean.getBoolean("Loki.launcher_trigger_update");
     public static final String launcher_version = System.getProperty("Loki.launcher_version");
     public static final boolean modded_capes = Boolean.getBoolean("Loki.modded_capes");
+    public static final boolean modify_user_agent = Boolean.getBoolean("Loki.modify_user_agent");
     public static final boolean username_validation = Boolean.getBoolean("Loki.username_validation");
+    public static final boolean verify_signatures = Boolean.getBoolean("Loki.verify_signatures");
 
     public static void premain(String agentArgs, Instrumentation inst) {
         if (auto_update && LokiUpdater.updateAndSwap(agentArgs, inst)) return;
@@ -44,8 +47,7 @@ public class Loki {
 
         // Textures
         inst.addTransformer(new AllowedDomainTransformer()); // Allowed texture domains. 1.7.6-1.16.5, 1.17-1.19.2, 1.19.3+
-        inst.addTransformer(new SignatureValidTransformer()); /* Texture signatures (possibly unnecessary?)
-		                                                                 1.7-1.18.2 (deprecated in 1.19) */
+        inst.addTransformer(new SignatureValidTransformer()); // Stub texture signature checks. 1.7.6-1.18.2
         inst.addTransformer(new FetchTexturesByPlayerNameTransformer()); // Fetch textures on offline mode servers
         inst.addTransformer(new NettyConnectTransformer()); // Let a server redirect profile queries. 1.7+
         inst.addTransformer(new NettyBindTransformer()); // Declare this server's API server to Loki clients. 1.7+

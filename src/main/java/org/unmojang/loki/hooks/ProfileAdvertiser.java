@@ -46,7 +46,8 @@ public final class ProfileAdvertiser {
     }
 
     private static boolean enforcesSecureProfile() {
-        return Boolean.getBoolean("Loki.enforce_secure_profile");
+        return Boolean.parseBoolean(System.getProperty("Loki.enforce_secure_profile",
+                System.getProperty("Loki.verify_signatures", "false")));
     }
 
     static String reasonOf(Throwable t) {

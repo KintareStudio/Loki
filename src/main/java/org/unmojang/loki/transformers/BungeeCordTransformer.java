@@ -2,16 +2,14 @@ package org.unmojang.loki.transformers;
 
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.*;
 import org.unmojang.loki.Loki;
 import org.unmojang.loki.LokiUtil;
+
 import java.util.Arrays;
 
 public class BungeeCordTransformer extends LokiTransformer {
     private static final String CERTIFICATE_CHECK_OWNER = "net/md_5/bungee/EncryptionUtil";
-    private static final String CERTIFICATE_CHECK_DESC =
-            "(Lnet/md_5/bungee/protocol/data/PlayerPublicKey;Ljava/util/UUID;)Z";
 
 
     protected boolean matches(String className) {
@@ -31,14 +29,17 @@ public class BungeeCordTransformer extends LokiTransformer {
         // so it can try the whole published set, and the field it used to overwrite goes unread.
         if (CERTIFICATE_CHECK_OWNER.equals(className) && Loki.enforce_secure_profile) {
             for (MethodNode mn : cn.methods) {
-                if (!"check".equals(mn.name) || !CERTIFICATE_CHECK_DESC.equals(mn.desc)) continue;
+                if (!"check".equals(mn.name) || !mn.desc.matches(
+                        "\\(Lnet/md_5/bungee/protocol/(data/)?PlayerPublicKey;(Ljava/util/UUID;)?\\)Z")) continue;
+                boolean hasUuid = mn.desc.contains("Ljava/util/UUID;");
 
                 mn.instructions.clear();
                 mn.tryCatchBlocks.clear();
                 if (mn.localVariables != null) mn.localVariables.clear();
 
                 mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0)); // the player's key
-                mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1)); // their uuid, null pre 1.19.1
+                if (hasUuid) mn.instructions.add(new VarInsnNode(Opcodes.ALOAD, 1));
+                else mn.instructions.add(new InsnNode(Opcodes.ACONST_NULL));
                 mn.instructions.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
                         "org/unmojang/loki/hooks/ProfileKeys",
                         "isCertificateValid",

@@ -353,6 +353,7 @@ public final class ProfileKeys {
         // Setting it says check everywhere; setting it to false says do not, whatever a server
         // asks for; and leaving it alone says take the server's word for it.
         String chosen = System.getProperty("Loki.enforce_secure_profile");
+        if (chosen == null) chosen = System.getProperty("Loki.verify_signatures");
         if (chosen != null) return Boolean.parseBoolean(chosen);
         return Boolean.getBoolean(ProfileRedirect.PROP_ENFORCE);
     }

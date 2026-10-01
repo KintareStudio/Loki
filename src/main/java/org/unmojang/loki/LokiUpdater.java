@@ -18,7 +18,7 @@ import java.util.jar.Manifest;
 
 public class LokiUpdater {
     private static final String UPDATE_HOST = "api.github.com";
-    private static final String RELEASES_URL = "https://" + UPDATE_HOST + "/repos/unmojang/Loki/releases/latest";
+    private static final String RELEASES_URL = "https://" + UPDATE_HOST + "/repos/KintareStudio/Loki/releases/latest";
 
     private static File pendingBackup;
     private static Thread applierHook;

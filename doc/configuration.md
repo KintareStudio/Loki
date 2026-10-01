@@ -27,6 +27,7 @@ use the API server's telemetry attributes; it does not force telemetry when the 
   ```
   -DLoki.auto_update=true
   ```
+  This fork checks the latest release of `KintareStudio/Loki`, preserving its Kintare extensions.
 
 - Respect the API server's chat restrictions (default: `true`)
   ```

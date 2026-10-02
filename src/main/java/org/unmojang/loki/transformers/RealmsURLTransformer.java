@@ -3,6 +3,7 @@ package org.unmojang.loki.transformers;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.tree.*;
+import org.unmojang.loki.RequestInterceptor;
 
 public class RealmsURLTransformer extends LokiTransformer {
     protected boolean matches(String name) {
@@ -22,6 +23,8 @@ public class RealmsURLTransformer extends LokiTransformer {
             }
         }
         if (!realms) return false;
+        String endpoint = RequestInterceptor.YGGDRASIL_MAP.get("pc.realms.minecraft.net");
+        if (endpoint == null) return false;
         boolean changed = false;
         for (MethodNode method : cn.methods) {
             for (AbstractInsnNode instruction = method.instructions.getFirst(); instruction != null;) {
@@ -30,9 +33,12 @@ public class RealmsURLTransformer extends LokiTransformer {
                     MethodInsnNode call = (MethodInsnNode) instruction;
                     if ("java/net/URI".equals(call.owner) && "toASCIIString".equals(call.name)
                             && "()Ljava/lang/String;".equals(call.desc)) {
-                        method.instructions.insert(call, new MethodInsnNode(Opcodes.INVOKESTATIC,
+                        InsnList redirect = new InsnList();
+                        redirect.add(new LdcInsnNode(endpoint));
+                        redirect.add(new MethodInsnNode(Opcodes.INVOKESTATIC,
                                 "org/unmojang/loki/hooks/RealmsHooks", "redirect",
-                                "(Ljava/lang/String;)Ljava/lang/String;", false));
+                                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", false));
+                        method.instructions.insert(call, redirect);
                         changed = true;
                     }
                 }

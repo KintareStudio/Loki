@@ -44,16 +44,34 @@ public class RealmsURLTest {
             if (!"https://realms.test/base/mco/client/compatible?a=one%2520two".equals(result))
                 throw new AssertionError(result);
         }
-        if (!"https://other.test/a".equals(RealmsHooks.redirect("https://other.test/a")))
+        if (!"https://other.test/a".equals(RealmsHooks.redirect("https://other.test/a", "https://realms.test")))
             throw new AssertionError("Unrelated URL changed");
-        if (!"https://pc.realms.minecraft.net.evil.test/a".equals(RealmsHooks.redirect("https://pc.realms.minecraft.net.evil.test/a")))
+        if (!"https://pc.realms.minecraft.net.evil.test/a".equals(RealmsHooks.redirect("https://pc.realms.minecraft.net.evil.test/a", "https://realms.test")))
             throw new AssertionError("Suffix domain changed");
         urls.remove("pc.realms.minecraft.net");
-        if (!"https://pc.realms.minecraft.net/a".equals(RealmsHooks.redirect("https://pc.realms.minecraft.net/a")))
+        if (!"https://pc.realms.minecraft.net/a".equals(RealmsHooks.redirect("https://pc.realms.minecraft.net/a", null)))
             throw new AssertionError("Unconfigured URL changed");
+        urls.put("pc.realms.minecraft.net", "https://realms.test");
+        java.io.InputStream isolatedInput = RealmsHooks.class.getResourceAsStream("RealmsHooks.class");
+        java.io.ByteArrayOutputStream isolatedOutput = new java.io.ByteArrayOutputStream();
+        byte[] isolatedBuffer = new byte[8192]; int isolatedSize;
+        while ((isolatedSize = isolatedInput.read(isolatedBuffer)) != -1) isolatedOutput.write(isolatedBuffer, 0, isolatedSize);
+        isolatedInput.close();
+        final byte[] isolatedBytes = isolatedOutput.toByteArray();
+        ClassLoader isolated = new ClassLoader(null) {
+            protected Class<?> findClass(String name) throws ClassNotFoundException {
+                if (!name.equals("org.unmojang.loki.hooks.RealmsHooks")) throw new ClassNotFoundException(name);
+                return defineClass(name, isolatedBytes, 0, isolatedBytes.length);
+            }
+        };
+        Class<?> isolatedHook = isolated.loadClass("org.unmojang.loki.hooks.RealmsHooks");
+        if (!"https://realms.test/worlds".equals(isolatedHook.getMethod("redirect", String.class, String.class)
+                .invoke(null, "https://pc.realms.minecraft.net/worlds", "https://realms.test")))
+            throw new AssertionError("Bootstrap-only hook failed");
         for (String file : args) {
             java.util.zip.ZipFile archive = new java.util.zip.ZipFile(file);
-            String name = file.contains("26.2") ? "com/mojang/realmsclient/client/RealmsClient" : "fby";
+            String name = archive.getEntry("com/mojang/realmsclient/client/RealmsClient.class") != null
+                    ? "com/mojang/realmsclient/client/RealmsClient" : "fby";
             java.io.InputStream input = archive.getInputStream(archive.getEntry(name + ".class"));
             java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream();
             byte[] buffer = new byte[8192]; int size;

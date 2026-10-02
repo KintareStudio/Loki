@@ -348,6 +348,7 @@ public class ProfileRedirectTest {
         Api primary = new Api("primary", "/ali", false, der(primaryKey), null);
         Api declared = new Api("declared", "/authlib-injector", true,
                 der(metadataOnlyKey), der(declaredKey));
+        Api cleartextApi = new Api("cleartext", "/authlib-injector", false, der(primaryKey), null);
 
         // Must land before RequestInterceptor's static initialiser reads them
         System.setProperty("minecraft.api.env", "custom");
@@ -363,7 +364,7 @@ public class ProfileRedirectTest {
 
         McServer declaring = new McServer(status(declared.base() + "/authlib-injector"));
         McServer silent = new McServer(status(null));
-        McServer cleartext = new McServer(status("http://cleartext.example/authlib-injector"));
+        McServer cleartext = new McServer(status(cleartextApi.base() + "/authlib-injector"));
         declaring.start();
         silent.start();
         cleartext.start();
@@ -607,7 +608,7 @@ public class ProfileRedirectTest {
         // Honoured, as a configured cleartext API server is. What travels over it is profile reads,
         // and a request carrying credentials is refused whatever the transport.
         check("a cleartext declaration is taken as given", ProfileRedirect.sessionBase() != null
-                && ProfileRedirect.sessionBase().startsWith("http://cleartext.example"),
+                && ProfileRedirect.sessionBase().startsWith(cleartextApi.base()),
                 ProfileRedirect.sessionBase());
 
         // A proxy connects onward for a player who connected to it, and on that connection the
@@ -633,11 +634,12 @@ public class ProfileRedirectTest {
         ProfileRedirect.awaitDiscovery(8000L);
         check("and once it is serving nobody, a server it joins is heard again",
                 ProfileRedirect.sessionBase() != null
-                        && ProfileRedirect.sessionBase().startsWith("http://cleartext.example"),
+                        && ProfileRedirect.sessionBase().startsWith(cleartextApi.base()),
                 ProfileRedirect.sessionBase());
 
         primary.server.stop(0);
         declared.server.stop(0);
+        cleartextApi.server.stop(0);
 
         System.out.println();
         System.out.println(failures == 0 ? "ProfileRedirectTest: PASSED" : "ProfileRedirectTest: " + failures + " FAILED");

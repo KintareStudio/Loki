@@ -42,6 +42,7 @@ public class Loki {
         // Authentication & skins/capes
         RequestInterceptor.setURLFactory();
         inst.addTransformer(new YggdrasilURLTransformer()); // Transform Yggdrasil URL strings
+        inst.addTransformer(new RealmsURLTransformer());
         inst.addTransformer(new AppletParameterTransformer()); // Fetch mppass for classic multiplayer
         inst.addTransformer(new PlayerSafetyFilterTransformer());
         inst.addTransformer(new DiscoveryServiceTransformer()); // Feed authlib a crafted discovery doc. 26.3+

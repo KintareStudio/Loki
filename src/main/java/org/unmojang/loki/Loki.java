@@ -83,6 +83,7 @@ public class Loki {
         inst.addTransformer(new OneSixLauncherReleaseTypeTransformer()); // Version release type related fixes
 
         // Misc fixes
+        inst.addTransformer(new LegacyRconThreadTransformer());
         inst.addTransformer(new BungeeCordTransformer()); // Patch BungeeCord's public key check and username filter
         inst.addTransformer(new ConcatenateURLTransformer()); // Prevent port number being ignored in old authlib, if you specified it
         inst.addTransformer(new ReIndevGetSkinTransformer()); // Fix a bug in ReIndev's ThreadGetSkin

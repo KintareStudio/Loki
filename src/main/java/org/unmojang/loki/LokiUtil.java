@@ -419,8 +419,11 @@ public class LokiUtil {
         System.setProperty("mojang.sessionserver", authlibInjectorApiLocation + "/sessionserver/session/minecraft/hasJoined");
 
         initServerMetadata(authlibInjectorApiLocation);
-        if (!RequestInterceptor.YGGDRASIL_MAP.containsKey("signaling-afd.franchise.minecraft-services.net"))
-            RequestInterceptor.registerAliHost("signaling-afd.franchise.minecraft-services.net", authlibInjectorApiLocation + "/signaling");
+        for (String host : ServiceOverrides.SIGNALING_HOSTS) {
+            if (!RequestInterceptor.YGGDRASIL_MAP.containsKey(host)) {
+                RequestInterceptor.registerAliHost(host, authlibInjectorApiLocation + "/signaling");
+            }
+        }
     }
 
     public static void apply1_21_9Fixes() {

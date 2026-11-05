@@ -6,7 +6,10 @@ public class ServiceOverridesTest {
   urls.put("realms", "https://realms.test/"); urls.put("filtering", "https://filtering.test");
   urls.put("api", "https://discovery.test/authlib-injector/api");
   urls.put("sessionserver", "https://sessions.test/");
+  urls.put("signaling", "https://signaling.test/");
   Map<String,String> aliases = ServiceOverrides.apply(urls);
+  if (!"https://signaling.test".equals(aliases.get("signaling-afd.franchise.minecraft-services.net"))) throw new AssertionError("production Signaling");
+  if (!"https://signaling.test".equals(aliases.get("signaling-afd.stage-6fd5f759.franchise.minecraft-services.net"))) throw new AssertionError("staging Signaling");
   if (!"https://realms.test".equals(aliases.get("pc.realms.minecraft.net"))) throw new AssertionError("legacy Realm");
   if (!"https://realms.test".equals(aliases.get("java.frontend.realms.minecraft-services.net"))) throw new AssertionError("modern Realm");
   if (!"https://filtering.test/".equals(System.getProperty("Loki.filteringV1.authority"))) throw new AssertionError("Filtering authority");

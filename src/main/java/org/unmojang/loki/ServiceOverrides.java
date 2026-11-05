@@ -5,6 +5,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 final class ServiceOverrides {
+    static final String[] SIGNALING_HOSTS = {
+        "signaling-afd.franchise.minecraft-services.net",
+        "signaling-afd.stage-6fd5f759.franchise.minecraft-services.net"
+    };
+
     private static String address(String value, boolean origin) {
         if (value == null || value.length() == 0) return null;
         try {
@@ -24,8 +29,7 @@ final class ServiceOverrides {
             {"api", "minecraft.api.account.host", "api.mojang.com"},
             {"authserver", "minecraft.api.auth.host", "authserver.mojang.com"},
             {"sessionserver", "minecraft.api.session.host", "sessionserver.mojang.com"},
-            {"minecraftservices", "minecraft.api.services.host", "api.minecraftservices.com"},
-            {"signaling", "", "signaling-afd.franchise.minecraft-services.net"}
+            {"minecraftservices", "minecraft.api.services.host", "api.minecraftservices.com"}
         };
         for (int i = 0; i < services.length; i++) {
             String[] service = services[i];
@@ -36,6 +40,10 @@ final class ServiceOverrides {
             if ("api".equals(service[0])) System.setProperty("minecraft.api.profiles.host", url);
             if ("sessionserver".equals(service[0]))
                 System.setProperty("mojang.sessionserver", url + "/session/minecraft/hasJoined");
+        }
+        String signaling = address(overrides.get("signaling"), false);
+        if (signaling != null) {
+            for (String host : SIGNALING_HOSTS) aliases.put(host, signaling);
         }
         String realms = address(overrides.get("realms"), false);
         if (realms != null) {

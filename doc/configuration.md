@@ -8,7 +8,14 @@ Signature verification, chat restrictions, Patchy server blocking and telemetry 
 default. Set the corresponding option to `false` to disable it. Enabling telemetry lets the game
 use the API server's telemetry attributes; it does not force telemetry when the server disallows it.
 
-- Use Authlib-Injector URL instead of `minecraft.api.*.host` parameters
+- Select an Authlib-Injector server with the agent argument
+  ```
+  -javaagent:Loki.jar=https://auth.example.com/authlib-injector
+  ```
+  Loki follows the selected server's `X-Authlib-Injector-Api-Location` header and metadata.
+  Without an advertised Signaling URL, both Minecraft Signaling discovery hosts use
+  `/signaling` under the resolved Authlib-Injector URL.
+  If the agent has no URL argument, `Loki.url` can supply one instead:
   ```
   -DLoki.url=https://drasl.unmojang.org
   ```
@@ -25,9 +32,10 @@ use the API server's telemetry attributes; it does not force telemetry when the 
 
 - Automatically update Loki in place on startup (skipped when offline)
   ```
-  -DLoki.auto_update=true
+  -DLoki.auto_update=true -DLoki.update_repository=owner/repository
   ```
-  This fork checks the latest release of `KintareStudio/Loki`, preserving its Kintare extensions.
+  Set `Loki.update_repository` to the GitHub repository whose releases you trust to run.
+  Loki skips the update check if no repository is configured.
 
 - Respect the API server's chat restrictions (default: `true`)
   ```
@@ -139,7 +147,7 @@ You can also override these properties within the build command:
 ant -DauthlibInjectorAPIServer=https://drasl.unmojang.org/authlib-injector
 ```
 
-`authlibInjectorAPIServer` is preferred when it is set, keep it empty if your API server does not support the authlib-injector API.
+`authlibInjectorAPIServer` is the build-time default when neither the agent argument nor `Loki.url` supplies a URL. Leave it empty for a portable JAR.
 
 If you don't want to recompile Loki, you can instead edit the Loki jar's `META-INF/MANIFEST.MF`:
 

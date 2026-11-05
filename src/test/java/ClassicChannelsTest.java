@@ -13,7 +13,7 @@ import java.nio.ByteBuffer;
  */
 public class ClassicChannelsTest {
     private static final int IDENTIFICATION = LegacyProtocol.CLASSIC_IDENTIFICATION_BYTES;
-    private static final String API = "https://drasl.kintare.studio/authlib-injector";
+    private static final String API = "https://auth.example.test/authlib-injector";
 
     private static int failures = 0;
 

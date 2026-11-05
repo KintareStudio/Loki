@@ -146,8 +146,8 @@ public final class ProfileKeys {
      * <p>
      * They are separate for a reason: one says a texture belongs to a profile, the other says a
      * player's chat key belongs to that player. Verifying either against the other's keys would
-     * hand whoever can sign one the ability to forge the other. Most deployments sign both with the
-     * same key, Kintare included, but that is their choice to make and not one to bake in here.
+     * hand whoever can sign one the ability to forge the other. Each deployment can choose whether
+     * to use the same key for both.
      */
     private static final class KeySet {
         static final KeySet EMPTY = new KeySet(Collections.<PublicKey>emptyList(),

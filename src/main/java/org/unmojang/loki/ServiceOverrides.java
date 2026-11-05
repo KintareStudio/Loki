@@ -10,7 +10,7 @@ final class ServiceOverrides {
         "signaling-afd.stage-6fd5f759.franchise.minecraft-services.net"
     };
 
-    private static String address(String value, boolean origin) {
+    static String address(String value, boolean origin) {
         if (value == null || value.length() == 0) return null;
         try {
             URL url = new URL(value);

@@ -18,13 +18,18 @@ import java.util.jar.Manifest;
 
 public class LokiUpdater {
     private static final String UPDATE_HOST = "api.github.com";
-    private static final String RELEASES_URL = "https://" + UPDATE_HOST + "/repos/KintareStudio/Loki/releases/latest";
 
     private static File pendingBackup;
     private static Thread applierHook;
 
     public static boolean updateAndSwap(String agentArgs, Instrumentation inst) {
         if (Boolean.getBoolean("Loki.auto_update.done")) return false;
+        String repository = System.getProperty("Loki.update_repository", "");
+        if (!repository.matches("[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+")
+                || repository.endsWith("/.") || repository.endsWith("/..")) {
+            Loki.log.warn("Skipping update check: set Loki.update_repository to a trusted GitHub owner/repository");
+            return false;
+        }
 
         Method newPremain;
         String version;
@@ -46,7 +51,7 @@ public class LokiUpdater {
                 return false;
             }
 
-            Json.JSONObject release = fetchLatestRelease(current);
+            Json.JSONObject release = fetchLatestRelease(repository, current);
             if (release == null) return false;
             version = release.optString("tag_name", "").replaceFirst("^v", "");
             if (version.length() == 0 || compareVersions(version, current) <= 0) {
@@ -119,9 +124,10 @@ public class LokiUpdater {
         }
     }
 
-    private static Json.JSONObject fetchLatestRelease(String currentVersion) {
+    private static Json.JSONObject fetchLatestRelease(String repository, String currentVersion) {
         try {
-            HttpURLConnection conn = (HttpURLConnection) new URL(RELEASES_URL).openConnection();
+            URL url = new URL("https://" + UPDATE_HOST + "/repos/" + repository + "/releases/latest");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestProperty("User-Agent", "Loki/" + currentVersion);
             conn.setRequestProperty("Accept", "application/vnd.github+json");
             conn.setConnectTimeout(5000);

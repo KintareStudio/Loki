@@ -18,7 +18,7 @@ import java.io.OutputStream;
  * That is the failure this design is most likely to have.
  */
 public class LegacyStreamsTest {
-    private static final String API = "https://drasl.kintare.studio/authlib-injector";
+    private static final String API = "https://auth.example.test/authlib-injector";
 
     private static int failures = 0;
 

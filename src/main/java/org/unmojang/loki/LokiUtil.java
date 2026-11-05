@@ -188,6 +188,12 @@ public class LokiUtil {
         return url.substring(0, pathStart).toLowerCase(Locale.ENGLISH) + url.substring(pathStart);
     }
 
+    static String authlibInjectorUrl(String agentArgs) {
+        if (agentArgs != null && agentArgs.trim().length() != 0) return agentArgs.trim();
+        String configured = System.getProperty("Loki.url");
+        return configured != null ? configured : MANIFEST_ATTRS.get("AuthlibInjectorAPIServer");
+    }
+
     private static void checkConnectivity(String serverUrl) {
         if (Hooks.OFFLINE_MODE || serverUrl == null || serverUrl.length() == 0) return;
         String url = canonicalizeUrl(serverUrl);
@@ -267,21 +273,23 @@ public class LokiUtil {
             } catch (MalformedURLException ignored) {}
             return server;
         }
+        HttpURLConnection conn = null;
         try {
             URL url = new URL(server);
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
             conn.setDoInput(true);
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(5000);
             conn.connect();
             String apiLocation = conn.getHeaderField("X-Authlib-Injector-Api-Location");
-            if (apiLocation == null) return null;
-            if (server.startsWith("http://")) return apiLocation.replaceFirst("^https://", "http://");
-            return apiLocation;
+            if (apiLocation == null || apiLocation.trim().length() == 0) return null;
+            return ServiceOverrides.address(new URL(conn.getURL(), apiLocation.trim()).toExternalForm(), false);
         } catch (Exception e) {
             Loki.log.error("Failed to get authlib-injector API location", e);
             return null;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 
@@ -406,7 +414,7 @@ public class LokiUtil {
     private static void initAuthlibInjectorAPI(String server) {
         server = canonicalizeUrl(server);
         String authlibInjectorApiLocation = getAuthlibInjectorApiLocation(server);
-        if (authlibInjectorApiLocation == null) authlibInjectorApiLocation = server;
+        if (authlibInjectorApiLocation == null) authlibInjectorApiLocation = server.replaceAll("/+$", "");
         Loki.log.info("Using authlib-injector API Server: " + authlibInjectorApiLocation);
         System.setProperty("minecraft.api.env", "custom");
         System.setProperty("minecraft.api.account.host", authlibInjectorApiLocation + "/api");
@@ -711,10 +719,7 @@ public class LokiUtil {
         }
 
         // Authlib-Injector API
-        String authlibInjectorURL = (System.getProperty("Loki.url") != null) // Prioritize Loki.url
-                ? System.getProperty("Loki.url") : (agentArgs != null && agentArgs.length() != 0)
-                ? agentArgs
-                : MANIFEST_ATTRS.get("AuthlibInjectorAPIServer");
+        String authlibInjectorURL = authlibInjectorUrl(agentArgs);
         if (authlibInjectorURL != null && authlibInjectorURL.length() != 0) {
             conditionallySetUserAgent(authlibInjectorURL);
             checkConnectivity(authlibInjectorURL);

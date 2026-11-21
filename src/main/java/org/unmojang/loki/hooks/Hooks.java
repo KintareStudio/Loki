@@ -1,6 +1,7 @@
 package org.unmojang.loki.hooks;
 
 import org.unmojang.loki.util.HttpUtil;
+import org.unmojang.loki.RequestInterceptor;
 import org.unmojang.loki.util.Json;
 import org.unmojang.loki.util.UuidBatcher;
 import org.unmojang.loki.util.logger.NilLogger;
@@ -252,6 +253,13 @@ public class Hooks {
         discovery.put("player", player);
         discovery.put("profiles", profiles);
         discovery.put("telemetry", telemetry);
+        String signalingBase = RequestInterceptor.signalingBase();
+        if (signalingBase != null) {
+            Json.JSONObject signaling = newEndpoints();
+            putEndpoint(signaling, "getConfiguration", signalingBase + "/api/v1.0/configuration/java", null);
+            putEndpoint(signaling, "connect", "{signalingUri}/ws/v1.0/messaging/connect/java", null);
+            discovery.put("signaling", signaling);
+        }
 
         Json.JSONObject root = new Json.JSONObject();
         root.put("environment", "PROD");

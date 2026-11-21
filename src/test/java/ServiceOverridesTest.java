@@ -26,6 +26,7 @@ public class ServiceOverridesTest {
    if (!(agent + "api-root/minecraftservices").equals(System.getProperty("minecraft.api.services.host")))
     throw new AssertionError("agent argument and relative metadata location");
    if (!"Independent provider".equals(LokiUtil.SERVER_NAME)) throw new AssertionError("provider metadata");
+   checkSignalingDiscovery(agent + "api-root/signaling");
    for (String host : ServiceOverrides.SIGNALING_HOSTS) {
     if (!(agent + "api-root/signaling").equals(RequestInterceptor.YGGDRASIL_MAP.get(host)))
      throw new AssertionError("Signaling fallback for " + host);
@@ -36,6 +37,15 @@ public class ServiceOverridesTest {
   }
  }
 
+ private static void checkSignalingDiscovery(String base) {
+  org.unmojang.loki.util.Json.JSONObject endpoints = new org.unmojang.loki.util.Json.JSONObject(
+      org.unmojang.loki.hooks.Hooks.getDiscoveryJson()).getJSONObject("discovery").getJSONObject("signaling").getJSONObject("endpoints");
+  if (!(base + "/api/v1.0/configuration/java").equals(endpoints.getJSONObject("getConfiguration").getString("uri")))
+   throw new AssertionError("signaling configuration discovery");
+  if (!"{signalingUri}/ws/v1.0/messaging/connect/java".equals(endpoints.getJSONObject("connect").getString("uri")))
+   throw new AssertionError("signaling connect template");
+ }
+
  public static void main(String[] args) throws Exception {
   checkAgentRouting();
   Map<String,String> urls = new HashMap<String,String>();
@@ -44,6 +54,8 @@ public class ServiceOverridesTest {
   urls.put("sessionserver", "https://sessions.test/");
   urls.put("signaling", "https://signaling.test/");
   Map<String,String> aliases = ServiceOverrides.apply(urls);
+  RequestInterceptor.YGGDRASIL_MAP.putAll(aliases);
+  checkSignalingDiscovery("https://signaling.test");
   if (!"https://signaling.test".equals(aliases.get("signaling-afd.franchise.minecraft-services.net"))) throw new AssertionError("production Signaling");
   if (!"https://signaling.test".equals(aliases.get("signaling-afd.stage-6fd5f759.franchise.minecraft-services.net"))) throw new AssertionError("staging Signaling");
   if (!"https://realms.test".equals(aliases.get("pc.realms.minecraft.net"))) throw new AssertionError("legacy Realm");

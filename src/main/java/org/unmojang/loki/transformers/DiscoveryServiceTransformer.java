@@ -19,7 +19,8 @@ public class DiscoveryServiceTransformer extends LokiTransformer {
 
         for (MethodNode mn : cn.methods) {
             if ("createDiscoverySupplier".equals(mn.name)
-                    && "(Ljava/net/Proxy;Lcom/mojang/authlib/Environment;)Ljava/util/function/Supplier;".equals(mn.desc)) {
+                    && ("(Ljava/net/Proxy;Lcom/mojang/authlib/Environment;)Ljava/util/function/Supplier;".equals(mn.desc)
+                    || "(Ljava/net/Proxy;Lcom/mojang/authlib/Environment;Ljava/lang/String;)Ljava/util/function/Supplier;".equals(mn.desc))) {
 
                 mn.instructions.clear();
                 mn.tryCatchBlocks.clear();

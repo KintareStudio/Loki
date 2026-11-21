@@ -87,6 +87,12 @@ public class RequestInterceptor {
         if (host != null && url != null) YGGDRASIL_MAP.put(host, url);
     }
 
+    public static String signalingBase() {
+        String host = ServiceOverrides.SIGNALING_HOSTS[0];
+        String base = YGGDRASIL_MAP.get(host);
+        return base == null && IS_MOJANG ? "https://" + host : base;
+    }
+
     public static void setURLFactory() {
         Loki.log.debug("Arrived in setURLFactory");
         Loki.log.trace("Classpath: " + System.getProperty("java.class.path"));

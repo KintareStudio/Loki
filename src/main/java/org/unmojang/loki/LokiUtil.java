@@ -375,6 +375,7 @@ public class LokiUtil {
         server = canonicalizeUrl(server);
         String authlibInjectorApiLocation = getAuthlibInjectorApiLocation(server);
         if (authlibInjectorApiLocation == null) authlibInjectorApiLocation = server;
+        while (authlibInjectorApiLocation.endsWith("/")) authlibInjectorApiLocation = authlibInjectorApiLocation.substring(0, authlibInjectorApiLocation.length() - 1);
         Loki.log.info("Using authlib-injector API Server: " + authlibInjectorApiLocation);
         System.setProperty("minecraft.api.env", "custom");
         System.setProperty("minecraft.api.account.host", authlibInjectorApiLocation + "/api");
@@ -388,6 +389,19 @@ public class LokiUtil {
         System.setProperty("mojang.sessionserver", authlibInjectorApiLocation + "/sessionserver/session/minecraft/hasJoined");
 
         initServerMetadata(authlibInjectorApiLocation);
+    }
+
+    private static void initAPIHostProperties() {
+        String[][] hosts = {
+                {"minecraft.api.session.host", "SessionHost"},
+                {"minecraft.api.services.host", "ServicesHost"}
+        };
+        for (String[] host : hosts) {
+            String value = MANIFEST_ATTRS.get(host[1]);
+            if (System.getProperty(host[0]) == null && value != null && value.length() != 0) {
+                System.setProperty(host[0], value);
+            }
+        }
     }
 
     public static void apply1_21_9Fixes() {
@@ -621,6 +635,8 @@ public class LokiUtil {
             conditionallySetUserAgent(sessionHost);
             checkConnectivity(sessionHost);
         }
+
+        initAPIHostProperties();
 
         if (Loki.launcher_version != null && !Hooks.OFFLINE_MODE) {
             LAUNCHER_VERSION_URL = Ygglib.getVersionJarURL(Loki.launcher_version);

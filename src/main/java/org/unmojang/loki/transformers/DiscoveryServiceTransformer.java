@@ -5,6 +5,7 @@ import org.objectweb.asm.Type;
 import org.objectweb.asm.tree.*;
 import org.unmojang.loki.Loki;
 import org.unmojang.loki.LokiUtil;
+import org.unmojang.loki.RequestInterceptor;
 
 public class DiscoveryServiceTransformer extends LokiTransformer {
 
@@ -19,7 +20,8 @@ public class DiscoveryServiceTransformer extends LokiTransformer {
 
         for (MethodNode mn : cn.methods) {
             if ("createDiscoverySupplier".equals(mn.name)
-                    && "(Ljava/net/Proxy;Lcom/mojang/authlib/Environment;)Ljava/util/function/Supplier;".equals(mn.desc)) {
+                    && ("(Ljava/net/Proxy;Lcom/mojang/authlib/Environment;)Ljava/util/function/Supplier;".equals(mn.desc)
+                    || "(Ljava/net/Proxy;Lcom/mojang/authlib/Environment;Ljava/lang/String;)Ljava/util/function/Supplier;".equals(mn.desc))) {
 
                 mn.instructions.clear();
                 mn.tryCatchBlocks.clear();
@@ -28,8 +30,11 @@ public class DiscoveryServiceTransformer extends LokiTransformer {
                 InsnList insns = new InsnList();
                 insns.add(new MethodInsnNode(Opcodes.INVOKESTATIC, OBJECT_MAPPER, "create",
                         "()L" + OBJECT_MAPPER + ";", false));
+                String signalingHost = RequestInterceptor.YGGDRASIL_MAP.get("signaling-afd.franchise.minecraft-services.net");
+                if (signalingHost == null) insns.add(new InsnNode(Opcodes.ACONST_NULL));
+                else insns.add(new LdcInsnNode(signalingHost));
                 insns.add(new MethodInsnNode(Opcodes.INVOKESTATIC, "org/unmojang/loki/hooks/Hooks",
-                        "getDiscoveryJson", "()Ljava/lang/String;", false));
+                        "getDiscoveryJson", "(Ljava/lang/String;)Ljava/lang/String;", false));
                 insns.add(new LdcInsnNode(Type.getObjectType("com/mojang/authlib/services/response/discovery/DiscoveryResponse")));
                 insns.add(new MethodInsnNode(Opcodes.INVOKEVIRTUAL, OBJECT_MAPPER, "readValue",
                         "(Ljava/lang/String;Ljava/lang/Class;)Ljava/lang/Object;", false));

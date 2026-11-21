@@ -127,11 +127,10 @@ public class Hooks {
         return ProfileKeys.certificateSignature(null);
     }
 
-    public static String getDiscoveryJson() {
-        String session = System.getProperty("minecraft.api.session.host", "https://sessionserver.mojang.com");
-        if (session.endsWith("/")) session = session.substring(0, session.length() - 1);
-        String services = System.getProperty("minecraft.api.services.host", "https://api.minecraftservices.com");
-        if (services.endsWith("/")) services = services.substring(0, services.length() - 1);
+    public static String getDiscoveryJson(String signalingHost) {
+        String session = discoveryHost("minecraft.api.session.host", "https://sessionserver.mojang.com");
+        String services = discoveryHost("minecraft.api.services.host", "https://api.minecraftservices.com");
+        if (signalingHost == null) signalingHost = "https://signaling-afd.franchise.minecraft-services.net";
 
         Json.JSONObject authentication = newEndpoints();
         putEndpoint(authentication, "getPublicKeys", services + "/publickeys", null);
@@ -147,9 +146,9 @@ public class Hooks {
         putEndpoint(player, "getAttributes", services + "/player/attributes", null);
         putEndpoint(player, "updateAttributes", services + "/player/attributes", null);
         putEndpoint(player, "sendReport", services + "/player/report", null);
-        putEndpoint(player, "getFriends", services + "/player/friends", null);
-        putEndpoint(player, "updateFriends", services + "/player/friends", null);
-        putEndpoint(player, "updatePresence", services + "/player/presence", null);
+        putEndpoint(player, "getFriends", services + "/friends", null);
+        putEndpoint(player, "updateFriends", services + "/friends", null);
+        putEndpoint(player, "updatePresence", services + "/presence", null);
 
         // Handled in AllowedDomainTransformer, this is a stub
         Json.JSONArray textureUris = new Json.JSONArray();
@@ -163,6 +162,10 @@ public class Hooks {
         Json.JSONObject telemetry = newEndpoints();
         putEndpoint(telemetry, "sendEvents", services + "/eventlog/v1/events", null);
 
+        Json.JSONObject signaling = newEndpoints();
+        putEndpoint(signaling, "getConfiguration", signalingHost + "/api/v1.0/configuration/java", null);
+        putEndpoint(signaling, "connect", "{signalingUri}/ws/v1.0/messaging/connect/java", null);
+
         Json.JSONObject discovery = new Json.JSONObject();
         discovery.put("product", "minecraft");
         discovery.put("authentication", authentication);
@@ -170,12 +173,20 @@ public class Hooks {
         discovery.put("player", player);
         discovery.put("profiles", profiles);
         discovery.put("telemetry", telemetry);
+        discovery.put("signaling", signaling);
 
         Json.JSONObject root = new Json.JSONObject();
         root.put("environment", "PROD");
         root.put("product", "minecraft");
         root.put("discovery", discovery);
         return root.toString();
+    }
+
+    private static String discoveryHost(String property, String fallback) {
+        String host = System.getProperty(property);
+        if (host == null || host.length() == 0) host = fallback;
+        while (host.endsWith("/")) host = host.substring(0, host.length() - 1);
+        return host;
     }
 
     private static Json.JSONObject newEndpoints() {

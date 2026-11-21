@@ -162,7 +162,8 @@ public class RequestInterceptor {
             if (host.equals("discovery.minecraftservices.com")) {
                 try {
                     Loki.log.info("Intercepting discovery request");
-                    return Ygglib.FakeURLConnection(originalUrl, originalConn, 200, Hooks.getDiscoveryJson().getBytes("UTF-8"));
+                    return Ygglib.FakeURLConnection(originalUrl, originalConn, 200,
+                            Hooks.getDiscoveryJson().getBytes("UTF-8"));
                 } catch (Exception e) {
                     Loki.log.error("Failed to serve discovery document", e);
                     return originalConn;

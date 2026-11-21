@@ -211,10 +211,8 @@ public class Hooks {
     }
 
     public static String getDiscoveryJson() {
-        String session = System.getProperty("minecraft.api.session.host", "https://sessionserver.mojang.com");
-        if (session.endsWith("/")) session = session.substring(0, session.length() - 1);
-        String services = System.getProperty("minecraft.api.services.host", "https://api.minecraftservices.com");
-        if (services.endsWith("/")) services = services.substring(0, services.length() - 1);
+        String session = discoveryHost("minecraft.api.session.host", "https://sessionserver.mojang.com");
+        String services = discoveryHost("minecraft.api.services.host", "https://api.minecraftservices.com");
 
         Json.JSONObject authentication = newEndpoints();
         putEndpoint(authentication, "getPublicKeys", services + "/publickeys", null);
@@ -266,6 +264,13 @@ public class Hooks {
         root.put("product", "minecraft");
         root.put("discovery", discovery);
         return root.toString();
+    }
+
+    private static String discoveryHost(String property, String fallback) {
+        String host = System.getProperty(property);
+        if (host == null || host.length() == 0) host = fallback;
+        while (host.endsWith("/")) host = host.substring(0, host.length() - 1);
+        return host;
     }
 
     private static Json.JSONObject newEndpoints() {
